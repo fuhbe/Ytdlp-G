@@ -1,0 +1,36 @@
+{
+  "executable": "Ytdlp-G.exe",
+  "architecture": "x64",
+  "subsystem": "GUI",
+  "sha256": "993ebdcc59ae818875507cd0f123c65640db9c6a4edc4d2144bd9c4230afc457",
+  "checks": [
+    "health",
+    "GUI + dependency worker",
+    "convert",
+    "probe",
+    "convert",
+    "convert",
+    "probe",
+    "zip",
+    "lite_inspect",
+    "lite_download",
+    "probe",
+    "lite_download",
+    "lite_inspect",
+    "lite_download",
+    "lite_download",
+    "probe",
+    "lite_download",
+    "inspect",
+    "download"
+  ],
+  "versions": {
+    "app": "1.2.0",
+    "yt-dlp": "2026.08.19",
+    "python": "3.12.10",
+    "quickjs": "0.17.0",
+    "ffmpeg": "ffmpeg version n8.1.3-20-gc8de997cb1-20261021 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version n8.1.3-20-gc8de997cb1-20261021 Copyright (c) 2007-2026 the FFmpeg developers"
+  },
+  "result": "passed"
+}

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ytdlp-g"
+version = "1.2.0"
+description = "Multilingual desktop downloader and media toolkit"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["PySide6-Essentials>=6.8,<7", "yt-dlp[default]>=2026.3.17"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.11", "pyinstaller>=6.12", "Pillow>=11"]
+
+[project.gui-scripts]
+ytdlp-g = "ytdlp_g.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ytdlp_g = ["i18n/*.json", "resources/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["online: optional network tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

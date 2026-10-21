@@ -1,0 +1,12 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=(1,2,0,0), prodvers=(1,2,0,0), mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0,0)),
+  kids=[StringFileInfo([StringTable('040904b0', [
+    StringStruct('CompanyName', 'Ytdlp-G contributors'),
+    StringStruct('FileDescription', 'Ytdlp-G media downloader'),
+    StringStruct('FileVersion', '1.2.0'),
+    StringStruct('InternalName', 'Ytdlp-G'),
+    StringStruct('LegalCopyright', 'Copyright 2026 Ytdlp-G contributors; MIT'),
+    StringStruct('OriginalFilename', 'Ytdlp-G.exe'),
+    StringStruct('ProductName', 'Ytdlp-G'),
+    StringStruct('ProductVersion', '1.2.0')
+  ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])])

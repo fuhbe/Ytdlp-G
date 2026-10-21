@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible problem with Ytdlp-G.
+title: "[Bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2, x64"
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - Installer
+        - Portable ZIP
+        - Running from source
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include content type, quality and output mode. Do not share private links or credentials.
+      placeholder: "1. Open the app..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+      description: Include the exact error text and a screenshot if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Additional details
+      description: Optional logs or public source site name. Remove tokens, cookies and personal paths before sharing.

@@ -1,0 +1,27 @@
+# Exact dependency versions validated with Python 3.12; Windows transitive helpers below.
+altgraph==0.17.5
+brotli==1.2.0
+certifi==2026.10.19
+charset-normalizer==3.5.2
+idna==3.20
+iniconfig==2.3.1
+mutagen==1.48.1
+packaging==26.3
+Pillow==13.0.0
+pluggy==1.7.0
+pycryptodomex==3.24.1
+Pygments==2.21.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+PySide6_Essentials==6.12.0
+pytest==9.1.1
+requests==2.34.2
+ruff==0.17.1
+setuptools==84.2.1
+shiboken6==6.12.0
+urllib3==2.8.0
+websockets==17.3
+yt-dlp==2026.8.19
+yt-dlp-ejs==0.8.0
+pefile==2024.8.26; sys_platform == "win32"
+pywin32-ctypes==0.2.3; sys_platform == "win32"

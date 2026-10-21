@@ -1,0 +1,92 @@
+name: Publish verified Windows release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag
+        required: true
+        default: v1.2.0
+      build_run_id:
+        description: Successful Windows build run in this repository
+        required: true
+        default: ''
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate tag and successful build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') { throw 'Invalid version tag' }
+          if ($env:BUILD_RUN_ID -notmatch '^\d+$') { throw 'Invalid run ID' }
+          $Run = gh api "repos/$env:GH_REPO/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $Run.conclusion -ne 'success' -or $Run.name -ne 'Windows build') { throw 'Build is not a successful Windows build' }
+          git rev-parse --verify "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw 'Tag is missing' }
+          # Documentation may advance; application/build code must match the verified binary.
+          git diff --exit-code $Run.head_sha $env:RELEASE_TAG -- src scripts installer assets pyproject.toml requirements-build.lock requirements.txt Ytdlp-G.spec
+          if ($LASTEXITCODE -ne 0) { throw 'Tag differs from verified application/build code' }
+          "Verified build: $($Run.html_url)"
+      - name: Download verified artifacts and prepare sources
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Run = gh api "repos/$env:GH_REPO/actions/runs/$env:BUILD_RUN_ID" | ConvertFrom-Json
+          gh run download $env:BUILD_RUN_ID --name "Ytdlp-G-$($env:RELEASE_TAG.Substring(1))-windows-x64-$($Run.run_number)" --dir release
+          if ($LASTEXITCODE -ne 0) { throw 'Binary artifact download failed' }
+          foreach ($Line in Get-Content 'release/SHA256SUMS.txt') {
+            $Parts = $Line.Trim() -split '\s+', 2
+            $Actual = (Get-FileHash (Join-Path 'release' $Parts[1]) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($Actual -ne $Parts[0]) { throw "Checksum mismatch: $($Parts[1])" }
+          }
+          gh run download $env:BUILD_RUN_ID --name "Ytdlp-G-validation-$($Run.run_number)" --dir validation
+          if ($LASTEXITCODE -ne 0) { throw 'Validation report download failed' }
+          foreach ($Name in @('packaged-smoke.json','portable-smoke.json','installed-smoke.json')) {
+            $Report = Get-Content (Join-Path 'validation' $Name) -Raw | ConvertFrom-Json
+            if ($Report.result -ne 'passed') { throw "Smoke did not pass: $Name" }
+          }
+          Compress-Archive -Path validation/* -DestinationPath release/Ytdlp-G-validation.zip
+          git archive --format=zip --prefix=Ytdlp-G/ --output=release/Ytdlp-G-source.zip $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed' }
+          Get-ChildItem release -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          } | Set-Content release/SHA256SUMS.txt -Encoding ASCII
+      - name: Upload assets and publish existing draft
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The by-tag endpoint can hide drafts. Find the draft in the authenticated list.
+          $Releases = gh api "repos/$env:GH_REPO/releases?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list release drafts' }
+          $Matches = @($Releases | Where-Object tag_name -eq $env:RELEASE_TAG)
+          if ($Matches.Count -ne 1) { throw 'Expected release draft was not found' }
+          $Release = $Matches[0]
+          if (-not $Release.draft) { throw 'Release is already published; refusing to replace published files' }
+          $Files = @(Get-ChildItem release -File | ForEach-Object FullName)
+          gh release upload $env:RELEASE_TAG @Files --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed' }
+          $Release = gh api "repos/$env:GH_REPO/releases/$($Release.id)" | ConvertFrom-Json
+          foreach ($File in Get-ChildItem release -File) {
+            $Asset = @($Release.assets | Where-Object name -eq $File.Name)
+            if ($Asset.Count -ne 1 -or $Asset[0].state -ne 'uploaded' -or $Asset[0].size -ne $File.Length) { throw "Missing/incomplete asset: $($File.Name)" }
+            if ($Asset[0].digest) {
+              $Expected = 'sha256:' + (Get-FileHash $File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($Asset[0].digest -ne $Expected) { throw "Remote hash mismatch: $($File.Name)" }
+            }
+          }
+          gh release edit $env:RELEASE_TAG --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing failed' }
+          gh release view $env:RELEASE_TAG --json url,tagName,isDraft,assets

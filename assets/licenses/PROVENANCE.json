@@ -1,0 +1,24 @@
+{
+  "Qt/PySide/Shiboken": {
+    "source": "https://github.com/pyside/pyside-setup/tree/v6.12.0/LICENSES",
+    "version": "6.12.0"
+  },
+  "Deno": {
+    "source": "https://github.com/denoland/deno/blob/v2.9.7/LICENSE.md",
+    "version": "2.9.7"
+  },
+  "sha256": {
+    "Qt-Apache-2.0.txt": "75c1ad8f852aa7b211faccf0fdb14f4f89843a447948f459059ba0125af3817c",
+    "Qt-GPL-2.0.txt": "640d90f6ee401241ff62834d0d1b33f83049e99b8bfdfa04ed1b0a1635dde3e7",
+    "Qt-GPL-3.0.txt": "0ae0485a5bd37a63e63603596417e4eb0e653334fa6c7f932ca3a0e85d4af227",
+    "Qt-BSD-3-Clause.txt": "b357d9b451099bf8b4e35b61ce9fb856aa7f0d5ca5c7066dc267f953033822e3",
+    "Deno-LICENSE.txt": "6c20360889333f81fef020ea61d403277084b96053e3c40a0e214bd2f098c80c",
+    "Qt-GPL-exception.txt": "9f3e3c22996c64f0269d4ccdae7fb1045f4761cdc835f83555f37a64f3a4b4bf",
+    "Qt-LGPL-3.0.txt": "97628afebc60f026f5c2b25d7491c46a5c4ee61f693e7cfa07fbd2c03605979b",
+    "QuickJS-LICENSE.txt": "96f73f9d2a16c21a36b418f06073be26e7d6d5e7c1bc99756b21a4f2c74ef171"
+  },
+  "QuickJS-ng": {
+    "source": "https://github.com/quickjs-ng/quickjs/blob/v0.17.0/LICENSE",
+    "version": "0.17.0"
+  }
+}

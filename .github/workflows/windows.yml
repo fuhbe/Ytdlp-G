@@ -1,0 +1,105 @@
+name: Windows build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: write
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-build.lock
+      - name: Install Inno Setup
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --version=6.5.4 --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' }
+          }
+      - name: Cache verified dependency archives
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/dependencies/ffmpeg.zip
+            build/dependencies/quickjs.exe
+          key: windows-dependencies-${{ hashFiles('scripts/dependencies.json') }}
+      - name: Test and package
+        run: ./scripts/build_windows.ps1
+      - name: Test silent installer
+        run: |
+          $InstallDir = Join-Path $env:RUNNER_TEMP 'Ytdlp-G-install-smoke'
+          $Setup = Start-Process -FilePath 'artifacts/Ytdlp-G-Setup.exe' -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$InstallDir") -PassThru -Wait
+          if ($Setup.ExitCode -ne 0) { throw "Install failed: $($Setup.ExitCode)" }
+          $Exe = Join-Path $InstallDir 'Ytdlp-G.exe'
+          & .venv/Scripts/python.exe scripts/smoke_packaged.py $InstallDir --report build/installed-smoke.json
+          if ($LASTEXITCODE -ne 0) { throw 'Installed app functional smoke failed' }
+          $Uninstall = Start-Process -FilePath (Join-Path $InstallDir 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait
+          if ($Uninstall.ExitCode -ne 0) { throw 'Uninstall failed' }
+      - name: Prepare release source and checksums
+        if: github.repository == 'fuhbe/Ytdlp-G' && github.ref == 'refs/heads/main'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git archive --format=zip --prefix=Ytdlp-G/ --output=artifacts/Ytdlp-G-source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed' }
+          Get-ChildItem artifacts -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          } | Set-Content artifacts/SHA256SUMS.txt -Encoding ASCII
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: Ytdlp-G-1.2.0-windows-x64-${{ github.run_number }}
+          path: artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Publish verified release
+        if: github.repository == 'fuhbe/Ytdlp-G' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release view v1.2.0 --repo $env:GITHUB_REPOSITORY --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) { Write-Host 'Release v1.2.0 already exists'; exit 0 }
+          gh release create v1.2.0 `
+            artifacts/Ytdlp-G-Setup.exe `
+            artifacts/Ytdlp-G-portable.zip `
+            artifacts/Ytdlp-G-source.zip `
+            artifacts/SHA256SUMS.txt `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title 'Ytdlp-G 1.2.0' `
+            --notes-file RELEASE_NOTES.md `
+            --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+          $Release = gh release view v1.2.0 --repo $env:GITHUB_REPOSITORY --json isDraft,assets | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $Release.isDraft) { throw 'Release is missing or still a draft' }
+          foreach ($File in Get-ChildItem artifacts -File) {
+            $Asset = @($Release.assets | Where-Object name -eq $File.Name)
+            if ($Asset.Count -ne 1 -or $Asset[0].size -ne $File.Length) { throw "Missing or incomplete release asset: $($File.Name)" }
+          }
+      - name: Upload validation reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Ytdlp-G-validation-${{ github.run_number }}
+          path: |
+            build/test-results.xml
+            build/*smoke.json
+          if-no-files-found: error
+          retention-days: 30
