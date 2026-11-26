@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [dev/turbo-engine-v1.4.0]
+    paths-ignore: ['docs/**', '.github/workflows/turbo-beta.yml']
 permissions:
   contents: read
 concurrency:

@@ -1,0 +1,50 @@
+name: Publish verified Turbo beta
+on:
+  push:
+    tags: ['v1.4.0-beta.1']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_RUN: '45752346491'
+      PREFIX: Ytdlp-G-1.4.0-beta.1
+      TAG: v1.4.0-beta.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify provenance and download tested artifacts
+        run: |
+          set -eu
+          gh run view "$BUILD_RUN" --json headSha,name,conclusion > run.json
+          jq -e '.name=="Windows build" and .conclusion=="success"' run.json
+          git diff --exit-code "$(jq -r .headSha run.json)" HEAD -- src scripts tests assets installer Ytdlp-G.spec pyproject.toml requirements-build.lock
+          gh run download "$BUILD_RUN" -n turbo-windows -D binaries
+          gh run download "$BUILD_RUN" -n Ytdlp-G-validation-7 -D validation
+          (cd binaries && sha256sum -c SHA256SUMS.txt --ignore-missing)
+          for name in packaged portable installed; do
+            jq -e '.result=="passed"' "validation/$name-smoke.json"
+          done
+          python - <<'PY'
+          from xml.etree import ElementTree as ET
+          suite=ET.parse("validation/test-results.xml").getroot().find("testsuite")
+          assert suite.get("errors")==suite.get("failures")=="0"
+          print(suite.attrib)
+          PY
+      - name: Assemble beta files and publish as prerelease
+        run: |
+          set -eu
+          mkdir out
+          mv binaries/Ytdlp-G-Setup.exe "out/$PREFIX-Setup.exe"
+          mv binaries/Ytdlp-G-portable.zip "out/$PREFIX-portable.zip"
+          git archive --format=zip --prefix=Ytdlp-G/ -o "out/$PREFIX-source.zip" HEAD
+          (cd validation && zip -q "../out/$PREFIX-validation.zip" *.json *.xml)
+          cp docs/turbo/benchmarks.md "out/$PREFIX-benchmarks.md"
+          (cd out && sha256sum * > SHA256SUMS.txt)
+          gh release create "$TAG" --verify-tag --draft --prerelease --latest=false --title 'Ytdlp-G 1.4.0 Beta 1 — Turbo Engine' --notes-file docs/turbo/beta.md out/*
+          gh release edit "$TAG" --draft=false --prerelease --latest=false
+          gh release view "$TAG" --json isDraft,isPrerelease,assets --jq '{isDraft,isPrerelease,assets:[.assets[].name]}'
