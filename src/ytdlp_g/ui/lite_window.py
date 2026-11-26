@@ -593,12 +593,16 @@ class LiteWindow(QWidget):
         if data.get("aggregate"):
             detail += " · " + self.tr("lite_counts", **data)
         self.status.setText(self.tr(key) + detail)
-        if not data.get("aggregate") and (
-            phase in {"engine_updating", "analyzing", "checking"}
-            or phase == "processing"
-            and not data.get("progress")
-            or phase == "running"
-            and not data.get("total")
+        if (
+            (data.get("aggregate") and not total)
+            or not data.get("aggregate")
+            and (
+                phase in {"engine_updating", "analyzing", "checking"}
+                or phase == "processing"
+                and not data.get("progress")
+                or phase == "running"
+                and not data.get("total")
+            )
         ):
             self.progress.setRange(0, 0)
         else:

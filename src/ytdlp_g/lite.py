@@ -5,6 +5,7 @@ import json
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from fractions import Fraction
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -55,7 +56,7 @@ def enrich_metadata(info):
     Never infer a 1080p or bitrate preset from a filename/container. Signed
     URLs and headers remain in worker memory, outside the returned catalog.
     """
-    formats = info.get("formats") or [info]
+    formats = info.get("formats") or [info.copy()]
 
     def fill(fmt):
         if (
@@ -279,7 +280,49 @@ def full_info(url, index=None, entry=None, refresh=False):
     return turbo.cached(("info", url, index), load, refresh)
 
 
-def list_items(url, emit):
+def item_references(entries, playlist, url):
+    entries = iter(entries)
+    index = 0
+    while True:
+        index += 1
+        try:
+            entry = next(entries) or {}
+        except StopIteration:
+            return
+        except (Cancelled, DownloadCancelled):
+            raise
+        except Exception as exc:
+            yield {
+                "index": index,
+                "title": f"#{index}",
+                "discovery_error": diagnostic("extraction", exc, index),
+            }
+            return
+        number = entry.get("playlist_index") or index
+        item = {"index": number, "title": entry.get("title") or f"#{number}"}
+        if entry:
+            candidate = entry.get("webpage_url") or entry.get("url") or url
+            if (
+                not str(candidate).startswith(("https://", "http://"))
+                and entry.get("ie_key") == "Youtube"
+            ):
+                candidate = "https://www.youtube.com/watch?v=" + str(entry.get("id", ""))
+            try:
+                item_url = validate_url(candidate) if playlist else url
+            except ValueError:
+                item_url = url
+            source_index = number if playlist and item_url == url else None
+            item.update(url=item_url, source_index=source_index)
+            if entry.get("formats"):
+                # Keep raw streams in RAM. Detailed probing is deferred to the item worker.
+                turbo.cached(
+                    ("seed", item_url, source_index), lambda entry=entry: entry, refresh=True
+                )
+        yield item
+
+
+@contextmanager
+def playlist_source(url, emit):
     options = extraction_options() | {
         "skip_download": True,
         "noplaylist": False,
@@ -288,43 +331,31 @@ def list_items(url, emit):
         "ignoreerrors": False,
     }
     emit({"phase": "analyzing"})
-    items = []
     with turbo.youtube_dl(options) as ydl:
         info = ydl.extract_info(url, download=False)
         if not info:
             raise ValueError("unavailable")
         playlist = "entries" in info
-        for index, entry in enumerate(info["entries"] if playlist else [info], 1):
-            entry = entry or {}
-            number = entry.get("playlist_index") or index
-            item = {"index": number, "title": entry.get("title") or f"#{number}"}
-            if entry:
-                candidate = entry.get("webpage_url") or entry.get("url") or url
-                if (
-                    not str(candidate).startswith(("https://", "http://"))
-                    and entry.get("ie_key") == "Youtube"
-                ):
-                    candidate = "https://www.youtube.com/watch?v=" + str(entry.get("id", ""))
-                try:
-                    item_url = validate_url(candidate) if playlist else url
-                except ValueError:
-                    item_url = url
-                source_index = number if playlist and item_url == url else None
-                item.update(url=item_url, source_index=source_index)
-                if entry.get("formats"):
-                    # Keep raw streams in RAM. Detailed probing is deferred to the item worker.
-                    turbo.cached(
-                        ("seed", item_url, source_index), lambda entry=entry: entry, refresh=True
-                    )
-            items.append(item)
-    return {
-        "url": url,
-        "title": info.get("title") or "download",
-        "playlist": playlist,
-        "items": items,
-        "skipped": sum("url" not in i for i in items),
-        "catalog_version": 2,
-    }
+        entries = info["entries"] if playlist else [info]
+        count = (
+            len(entries)
+            if isinstance(entries, (list, tuple))
+            else info.get("playlist_count") or info.get("n_entries") or 0
+        )
+        yield {
+            "url": url,
+            "title": info.get("title") or "download",
+            "playlist": playlist,
+            "count": count,
+            "catalog_version": 2,
+            "items": item_references(entries, playlist, url),
+        }
+
+
+def list_items(url, emit):
+    with playlist_source(url, emit) as plan:
+        items = list(plan["items"])
+        return plan | {"items": items, "skipped": sum("url" not in i for i in items)}
 
 
 def _inspect(url, emit):
@@ -436,19 +467,50 @@ def retry_zip(payload, emit):
     working = destination / ".ytdlp-g" / identity(payload["url"], payload["quality"], "zip")
     state = json.loads((working / "archive.json").read_text("utf8"))
     target = (working / "files").resolve()
-    files = [(target / name).resolve() for name in state["files"]]
-    if not all(f.is_relative_to(target) for f in files):
-        raise ValueError("invalid_files")
-    archive = finish_zip(files, destination, state["title"], emit)
+    files = []
+    for name, size, stamp in state["files"]:
+        path = (target / name).resolve()
+        if not path.is_relative_to(target) or not path.is_file():
+            raise ValueError("invalid_files")
+        stat = path.stat()
+        if (stat.st_size, stat.st_mtime_ns) != (size, stamp):
+            raise ValueError("zip_integrity")
+        files.append(path)
+    try:
+        archive = finish_zip(files, destination, state["title"], emit)
+    except (Cancelled, DownloadCancelled):
+        raise
+    except Exception as exc:
+        return state["result"] | {
+            "status": "zip_failed",
+            "archive_error": diagnostic("zip", exc),
+            "files": [str(f) for f in files],
+        }
+    try:
+        (working / "archive.json").unlink(missing_ok=True)
+    except OSError as exc:
+        diagnostic("cleanup", exc)
     if not state["result"]["failed"] and not state["result"]["skipped"]:
         cleanup_stage(working)
     return state["result"] | {"files": [archive]}
 
 
 def download_lite(payload, emit=lambda data: None):
+    url = payload.get("url") or (payload.get("analysis") or {}).get("url")
+    if url and payload["mode"] == "zip":
+        key = identity(url, payload["quality"], "zip")
+        pending = Path(payload["destination"]) / ".ytdlp-g" / key / "archive.json"
+        if pending.is_file():
+            return retry_zip(payload | {"url": url}, emit)
+    if payload.get("analysis"):
+        return download_plan(payload, payload["analysis"], emit)
+    with playlist_source(validate_url(payload["url"]), emit) as plan:
+        return download_plan(payload, plan, emit)
+
+
+def download_plan(payload, analysis, emit):
     from .paths import cleanup_stage
 
-    analysis = payload.get("analysis") or list_items(validate_url(payload["url"]), emit)
     key = payload["quality"]
     if key not in {BEST, MP3} and key not in {
         choice["key"] for choice in analysis.get("choices", [])
@@ -463,7 +525,7 @@ def download_lite(payload, emit=lambda data: None):
     working = destination / ".ytdlp-g" / job
     target = working / "files" if mode == "zip" else destination
     items = analysis["items"]
-    total = len(items)
+    total = len(items) if isinstance(items, list) else analysis["count"]
     fractions = {}
     counts = dict(completed=0, failed=0, skipped=0)
     lock = threading.Lock()
@@ -482,15 +544,21 @@ def download_lite(payload, emit=lambda data: None):
                 | {
                     "aggregate": True,
                     "phase": event.get("phase") or event.get("status", "running"),
-                    "progress": sum(fractions.values()) * (95 if mode == "zip" else 99) / total,
+                    "progress": min(1, sum(fractions.values()) / total)
+                    * (95 if mode == "zip" else 99)
+                    if total
+                    else 0,
                     "current": i,
                     "total_items": total,
-                    "remaining": total - sum(counts.values()),
+                    "remaining": max(0, total - sum(counts.values())) if total else "?",
                 }
             )
 
     def one(item):
         i = item["index"]
+        if item.get("discovery_error"):
+            report(item, {}, "failed")
+            return [], item["discovery_error"], None
         if "url" not in item:
             report(item, {}, "skipped")
             return [], None, None
@@ -602,7 +670,10 @@ def download_lite(payload, emit=lambda data: None):
         state = {
             "title": safe_name(analysis["title"], 70),
             "result": result,
-            "files": [str(Path(f).relative_to(target)) for f in files],
+            "files": [
+                (str(p.relative_to(target)), p.stat().st_size, p.stat().st_mtime_ns)
+                for p in map(Path, files)
+            ],
         }
         tmp = working / "archive.tmp"
         tmp.write_text(json.dumps(state), "utf8")
@@ -614,6 +685,10 @@ def download_lite(payload, emit=lambda data: None):
         except Exception as exc:
             detail = diagnostic("zip", exc)
             return result | {"status": "zip_failed", "archive_error": detail, "files": files}
+        try:
+            (working / "archive.json").unlink(missing_ok=True)
+        except OSError as exc:
+            diagnostic("cleanup", exc)
     if status == "complete":
         cleanup_stage(working)
     return result | {"files": files}

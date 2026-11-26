@@ -66,6 +66,7 @@ def dispatch(request):
         from .paths import data_dir
 
         configure_logging(data_dir(), worker=True)
+    action = "worker"
     try:
         action, payload = request["action"], request["payload"]
 
@@ -155,13 +156,21 @@ def dispatch(request):
             raise ValueError("invalid_options")
         emit("result", result)
     except Exception as exc:
-        from .downloader import error_code
+        from .diagnostics import diagnostic
 
+        details = diagnostic(
+            "extraction"
+            if action in {"inspect", "lite_inspect", "lite_download"}
+            else "zip"
+            if action == "lite_zip_retry"
+            else "worker",
+            exc,
+        )
         # Stack function names help diagnostics without disclosing URLs or paths.
         emit(
             "error",
             {
-                "code": error_code(exc),
+                **details,
                 "type": type(exc).__name__,
                 "trace": [frame.name for frame in traceback.extract_tb(exc.__traceback__)],
             },

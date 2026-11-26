@@ -494,11 +494,11 @@ def error_code(error):
         ("private", "private_media"),
         ("sign in", "private_media"),
         ("unsupported url", "unsupported_url"),
+        ("requested format", "format_unavailable"),
         ("not available", "unavailable"),
         ("removed", "unavailable"),
         ("http error", "network_error"),
         ("timed out", "network_error"),
-        ("requested format", "format_unavailable"),
     ):
         if marker in text:
             return code

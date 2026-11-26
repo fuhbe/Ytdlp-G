@@ -107,8 +107,8 @@ def test_zip_retry_offline(tmp_path, media_url, monkeypatch):
         result = lite.download_lite(payload)
     assert result["status"] == "zip_failed" and result["archive_error"]["code"] == "disk_full"
     assert Path(result["files"][0]).exists()
-    monkeypatch.setattr(lite, "list_items", lambda *a: pytest.fail("Network during ZIP retry"))
-    result = lite.retry_zip(payload, lambda e: None)
+    monkeypatch.setattr(lite, "playlist_source", lambda *a: pytest.fail("Network during ZIP retry"))
+    result = lite.download_lite(payload)
     with zipfile.ZipFile(result["files"][0]) as archive:
         assert (
             archive.testzip() is None and archive.infolist()[0].compress_type == zipfile.ZIP_STORED
@@ -197,7 +197,36 @@ def test_delivered_geometry_timestamps_and_audio(height, fps, tmp_path, media_fi
         ],
         check=True,
     )
-    url = media_url.rsplit("/", 1)[0] + "/" + name
+    base = media_url.rsplit("/", 1)[0]
+    video = source_file.with_name(f"v{height}.mp4")
+    audio = source_file.with_name(f"a{height}.m4a")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(source_file),
+            "-an",
+            "-c:v",
+            "copy",
+            str(video),
+            "-vn",
+            "-c:a",
+            "copy",
+            str(audio),
+        ],
+        check=True,
+    )
+    manifest = source_file.with_suffix(".mpd")
+    manifest.write_text(f'''<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT0.5S" minBufferTime="PT0.1S">
+    <Period duration="PT0.5S"><AdaptationSet mimeType="video/mp4" contentType="video">
+    <Representation id="vid" bandwidth="200000" height="{height}" width="{height * 16 // 9 // 2 * 2}" frameRate="{fps}" codecs="avc1">
+    <BaseURL>{base}/{video.name}</BaseURL><SegmentBase/></Representation></AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" contentType="audio"><Representation id="aud" bandwidth="96000" codecs="mp4a.40.2">
+    <BaseURL>{base}/{audio.name}</BaseURL><SegmentBase/></Representation></AdaptationSet></Period></MPD>''')
+    url = base + "/" + manifest.name
     result = lite.download_lite(
         dict(url=url, quality=lite.BEST, destination=str(tmp_path), mode="normal")
     )

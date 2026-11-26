@@ -50,6 +50,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Installed app functional smoke failed' }
           $Uninstall = Start-Process -FilePath (Join-Path $InstallDir 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -PassThru -Wait
           if ($Uninstall.ExitCode -ne 0) { throw 'Uninstall failed' }
+      - name: Record public YouTube fixture availability
+        run: |
+          $env:PATH = (Resolve-Path 'build/dependencies/bin').Path + ';' + $env:PATH
+          & .venv/Scripts/python.exe scripts/check_public_media.py
       - name: Upload beta binaries
         uses: actions/upload-artifact@v4
         with:
@@ -64,5 +68,6 @@ jobs:
           path: |
             build/test-results.xml
             build/*smoke.json
+            build/public-media.json
           if-no-files-found: error
           retention-days: 30

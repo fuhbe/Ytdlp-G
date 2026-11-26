@@ -34,7 +34,9 @@ def create_zip(
     common = Path(__import__("os").path.commonpath([str(p.parent) for p in sources]))
     used, records = set(), []
     written = 0
-    with tempfile.TemporaryDirectory(dir=target.parent, prefix=".ytdlpg-zip-") as temp:
+    with tempfile.TemporaryDirectory(
+        dir=target.parent, prefix=".ytdlpg-zip-", ignore_cleanup_errors=True
+    ) as temp:
         temporary = Path(temp) / "archive.zip"
         method = zipfile.ZIP_STORED if not compression else zipfile.ZIP_DEFLATED
         with zipfile.ZipFile(

@@ -360,9 +360,9 @@ def ensure_mp4(
     progress=lambda event: None,
     preserve_codec=True,
 ):
+    """Verify selected tracks and preserve MP4-compatible source streams."""
     from . import turbo
 
-    """Verify sound and normalize incompatible source codecs to H.264/AAC MP4."""
     source = Path(source)
     info = probe(source, ffprobe)
     streams = info.get("streams", [])
