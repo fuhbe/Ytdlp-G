@@ -45,12 +45,11 @@ def formats(height=720, bitrate=128):
     }
 
 
-def test_catalog_only_real_native_choices():
+def test_catalog_only_mp4_with_sound_and_mp3():
     catalog = lite.quality_catalog(formats())
-    assert set(catalog) == {"video:mp4:720", "audio:aac:0", "audio:mp3:convert"}
+    assert set(catalog) == {"video:mp4:720", "audio:mp3:convert"}
     assert catalog["video:mp4:720"]["video_stream"] == "v"
     assert catalog["video:mp4:720"]["audio_stream"] == "a"
-    assert catalog["audio:aac:0"]["bitrate_min"] == 128
     assert all(c["container"] != "mp3" for c in catalog.values() if not c.get("conversion"))
 
 
@@ -58,8 +57,7 @@ def test_playlist_intersection_does_not_offer_unavailable_resolution():
     choices = lite.common_choices(
         [lite.quality_catalog(formats()), lite.quality_catalog(formats(480, 96))]
     )
-    assert len(choices) == 2 and choices[0]["kind"] == "audio"
-    assert (choices[0]["bitrate_min"], choices[0]["bitrate_max"]) == (96, 128)
+    assert len(choices) == 1 and choices[0]["key"] == "audio:mp3:convert"
     assert "audio_stream" not in choices[0]
 
 
@@ -93,7 +91,7 @@ def test_playlist_checks_every_item_and_counts_private_entries(monkeypatch):
     assert len(extracted) == 3
     assert [item["index"] for item in result["items"]] == [1, 3]
     assert result["skipped"] == 1
-    assert [c["key"] for c in result["choices"]] == ["audio:aac:0", "audio:mp3:convert"]
+    assert [c["key"] for c in result["choices"]] == ["audio:mp3:convert"]
 
 
 def test_quality_disappearing_is_reported_without_fallback(monkeypatch, tmp_path):
@@ -130,23 +128,22 @@ def test_quality_disappearing_is_reported_without_fallback(monkeypatch, tmp_path
     assert list(tmp_path.iterdir()) == []
 
 
-def test_real_link_native_audio_and_zip_only(media_url, tmp_path):
+def test_real_link_mp3_audio_and_mp4_zip_only(media_url, tmp_path):
     analysis = lite.inspect_lite(media_url)
     assert {c["key"] for c in analysis["choices"]} == {
         "video:mp4:90",
-        "audio:aac:0",
         "audio:mp3:convert",
     }
     audio = lite.download_lite(
         {
             "analysis": analysis,
-            "quality": "audio:aac:0",
+            "quality": "audio:mp3:convert",
             "mode": "normal",
             "destination": str(tmp_path / "audio"),
         }
     )
     streams = probe(audio["files"][0])["streams"]
-    assert len(streams) == 1 and streams[0]["codec_name"] == "aac"
+    assert len(streams) == 1 and streams[0]["codec_name"] == "mp3"
     zipped = lite.download_lite(
         {
             "analysis": analysis,
@@ -193,15 +190,15 @@ def test_compact_gui_real_download_and_live_language(qapp, tmp_path, media_url):
     assert window.analysis is not None, window.status.text()
     assert window.quality.count() == 1 and "90p" in window.quality.currentText()
     window.kind.setCurrentIndex(window.kind.findData("audio"))
-    assert "AAC" in window.quality.currentText()
+    assert "MP3" in window.quality.currentText()
     for language in ("es", "en", "pt-BR"):
         window.language.setCurrentIndex(window.language.findData(language))
         assert window.url.text() == media_url
-        assert window.quality.currentData() == "audio:aac:0"
+        assert window.quality.currentData() == "audio:mp3:convert"
     window.start_download()
     wait_until(qapp, lambda: not window.tasks)
     assert window.last_result and window.last_result["completed"] == 1, window.status.text()
-    assert Path(window.last_result["files"][0]).suffix == ".m4a"
+    assert Path(window.last_result["files"][0]).suffix == ".mp3"
     assert window.size().width() == 600 and window.size().height() == 440
     assert window.download_button.geometry().height() > 0
     window.quality.setCurrentIndex(window.quality.findData("audio:mp3:convert"))
@@ -221,7 +218,7 @@ def test_compact_gui_real_download_and_live_language(qapp, tmp_path, media_url):
     "mode,quality,suffix",
     [
         ("normal", "video:mp4:90", ".mp4"),
-        ("zip", "audio:aac:0", ".m4a"),
+        ("zip", "video:mp4:90", ".mp4"),
         ("normal", "audio:mp3:convert", ".mp3"),
         ("zip", "audio:mp3:convert", ".mp3"),
     ],
@@ -338,11 +335,12 @@ def test_open_menus_stay_readable_with_dark_system_palette(qapp, tmp_path):
             view = combo.view()
             image = view.viewport().grab().toImage()
             unselected = view.visualRect(
-                combo.model().index(1 if combo.currentIndex() == 0 else 0, 0)
+                combo.model().index(1 if combo.count() > 1 and combo.currentIndex() == 0 else 0, 0)
             )
             # The actual rendered unselected row must be light even on dark OS.
             background = image.pixelColor(image.width() - 12, unselected.center().y())
-            assert background.lightness() > 200
+            if combo.count() > 1:
+                assert background.lightness() > 200
             palette = view.palette()
             assert palette.color(QPalette.ColorRole.Text).lightness() < 100
             assert palette.color(QPalette.ColorRole.HighlightedText).lightness() > 200
@@ -353,3 +351,57 @@ def test_open_menus_stay_readable_with_dark_system_palette(qapp, tmp_path):
         if window:
             window.close()
         qapp.setPalette(original)
+
+
+def test_video_without_audio_is_not_offered():
+    info = formats()
+    info["formats"] = [info["formats"][0]]
+    assert lite.quality_catalog(info) == {}
+
+
+def test_webm_and_mixed_codec_playlists_offer_mp4_at_real_resolutions():
+    webm = formats()
+    webm["formats"][0].update(ext="webm", vcodec="vp9")
+    webm["formats"][1].update(ext="webm", acodec="opus")
+    catalogs = [lite.quality_catalog(formats()), lite.quality_catalog(webm)]
+    assert {c["key"] for c in lite.common_choices(catalogs)} == {
+        "video:mp4:720",
+        "audio:mp3:convert",
+    }
+
+
+def test_real_separate_webm_video_and_audio_become_mp4(media_file, media_url, tmp_path):
+    """Exercise actual adaptive merging + incompatible codecs, without YouTube availability."""
+    source_dir = media_file.parent
+    for name, args in [
+        ("separate-video.webm", ["-an", "-c:v", "libvpx-vp9"]),
+        ("separate-audio.webm", ["-vn", "-c:a", "libvorbis"]),
+    ]:
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-i", str(media_file), *args, str(source_dir / name)],
+            check=True,
+        )
+    base = media_url.rsplit("/", 1)[0]
+    (source_dir / "adaptive.mpd").write_text(f"""<?xml version="1.0"?>
+    <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT2S" minBufferTime="PT1S">
+      <Period duration="PT2S">
+        <AdaptationSet mimeType="video/webm" contentType="video"><Representation id="v" bandwidth="200000" width="160" height="90" codecs="vp9"><BaseURL>{base}/separate-video.webm</BaseURL><SegmentBase/></Representation></AdaptationSet>
+        <AdaptationSet mimeType="audio/webm" contentType="audio"><Representation id="a" bandwidth="128000" codecs="vorbis" audioSamplingRate="44100"><BaseURL>{base}/separate-audio.webm</BaseURL><SegmentBase/></Representation></AdaptationSet>
+      </Period>
+    </MPD>""")
+    analysis = lite.inspect_lite(base + "/adaptive.mpd")
+    assert "video:mp4:90" in {c["key"] for c in analysis["choices"]}
+    result = lite.download_lite(
+        {
+            "analysis": analysis,
+            "quality": "video:mp4:90",
+            "mode": "normal",
+            "destination": str(tmp_path),
+        }
+    )
+    assert len(result["files"]) == 1 and result["files"][0].endswith(".mp4")
+    streams = probe(result["files"][0])["streams"]
+    assert {s["codec_type"] for s in streams} == {"video", "audio"}
+    video = next(s for s in streams if s["codec_type"] == "video")
+    assert video["height"] == 90 and video["codec_name"] == "h264"
+    assert next(s for s in streams if s["codec_type"] == "audio")["codec_name"] == "aac"

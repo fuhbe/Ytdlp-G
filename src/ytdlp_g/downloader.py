@@ -8,7 +8,7 @@ from pathlib import Path
 import yt_dlp
 
 from .archive import create_zip
-from .media import executable
+from .media import ensure_mp4, executable
 from .models import Options
 from .paths import publish, safe_name, validate_url
 
@@ -21,7 +21,14 @@ class QuietLogger:
 
 
 def base_options():
+    runtimes = {}
+    for name, key in (("deno", "deno"), ("qjs", "quickjs")):
+        try:
+            runtimes[key] = {"path": executable(name)}
+        except ValueError:
+            continue
     return {
+        "js_runtimes": runtimes,
         "quiet": True,
         "no_warnings": True,
         "logger": QuietLogger(),
@@ -124,6 +131,8 @@ def inspect(url, playlist=False, page=1, page_size=100):
 
 def format_selector(options):
     if options.kind in {"audio", "subtitles"}:
+        if options.kind == "audio" and options.container == "mp3":
+            return options.audio_stream or "bestaudio[ext=mp3]/bestaudio/best"
         return options.audio_stream or "bestaudio/best"
     if options.video_stream:
         return options.video_stream + (
@@ -181,20 +190,10 @@ def download_options(options, stage, progress):
         "allow_unplayable_formats": False,
     }
     try:
-        result["js_runtimes"] = {"deno": {"path": executable("deno")}}
-    except ValueError:
-        pass
-    try:
         result["ffmpeg_location"] = str(Path(executable("ffmpeg", options.ffmpeg)).parent)
     except ValueError:
-        if options.kind == "audio" and options.container == "original":
-            pass
-        else:
+        if not (options.kind == "audio" and options.container == "original"):
             raise
-    try:
-        result["js_runtimes"] = {"quickjs": {"path": executable("qjs")}}
-    except ValueError:
-        pass
     if options.rate_limit:
         result["ratelimit"] = options.rate_limit * 1024
     if options.codec != "auto":
@@ -213,8 +212,13 @@ def download_options(options, stage, progress):
     elif options.kind == "audio" and options.container == "original":
         postprocessors.append({"key": "FFmpegExtractAudio", "preferredcodec": "best"})
     elif options.kind in {"video", "video_only"}:
-        result["merge_output_format"] = options.container
-        postprocessors.append({"key": "FFmpegVideoRemuxer", "preferedformat": options.container})
+        # Matroska accepts source codecs such as VP9/Vorbis; normalize the final
+        # MP4 after merging so an incompatible audio codec cannot abort the merge.
+        result["merge_output_format"] = "mkv" if options.container == "mp4" else options.container
+        if options.container != "mp4":
+            postprocessors.append(
+                {"key": "FFmpegVideoRemuxer", "preferedformat": options.container}
+            )
     if options.subtitles and options.subtitle_format == "srt":
         postprocessors.append({"key": "FFmpegSubtitlesConvertor", "format": "srt"})
     if options.embed_subtitles:
@@ -293,6 +297,21 @@ def download(payload, emit=lambda event: None):
         info = ydl.extract_info(validate_url(payload["url"]), download=True)
         if not info:
             raise ValueError("unavailable")
+    if options.kind in {"video", "video_only"} and options.container == "mp4":
+        candidates = [
+            p
+            for p in stage.iterdir()
+            if p.suffix.lower()
+            in {".mp4", ".mkv", ".webm", ".mov", ".flv", ".avi", ".ts", ".m4v", ".ogv"}
+        ]
+        if len(candidates) != 1:
+            raise ValueError("no_output")
+        ensure_mp4(
+            candidates[0],
+            require_audio=options.kind == "video",
+            ffmpeg=options.ffmpeg,
+            ffprobe=options.ffprobe,
+        )
     if options.info_json:
         # Do not export signed media URLs or request headers from yt-dlp's raw info.
         clean = summarize(info)

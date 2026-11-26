@@ -173,7 +173,7 @@
   "ffmpeg": "Ejecutable FFmpeg (vacío = automático)",
   "ffprobe": "Ejecutable FFprobe (vacío = automático)",
   "manual_update": "Actualización manual asistida",
-  "update_notice": "Actualiza con un instalador de una fuente fiable. Comprueba la firma y el hash publicados por el distribuidor. Esta versión no ejecuta actualizaciones remotas. Algunos sitios requieren JavaScript (Deno) y pueden restringir el acceso.",
+  "update_notice": "Buscando actualizaciones del motor yt-dlp…",
   "profile_name": "Nombre del perfil",
   "save_profile": "Guardar opciones actuales como perfil",
   "delete_profile": "Eliminar perfil personalizado",
@@ -256,7 +256,7 @@
   "lite_heading": "Descargar un vídeo o playlist",
   "lite_url_hint": "Pega un enlace de vídeo o playlist",
   "lite_instruction": "Pega un enlace y pulsa Analizar.",
-  "lite_available_notice": "Solo calidades disponibles. En playlists, opciones comunes a todos los elementos accesibles.",
+  "lite_available_notice": "Vídeo con audio en MP4 · Solo audio en MP3. Calidades disponibles en la fuente.",
   "lite_folder": "Guardar en",
   "lite_analyzing": "Analizando calidades disponibles…",
   "lite_choose_quality": "Elige la calidad y pulsa Descargar.",
@@ -267,6 +267,10 @@
   "lite_checking": "Comprobando disponibilidad…",
   "lite_close_active": "¿Cancelar y cerrar? Los archivos descargados se conservarán.",
   "lite_no_common": "No hay una calidad común a todos los elementos. Descarga los enlaces por separado.",
-  "lite_mp3_quality": "MP3 · Alta calidad",
-  "lite_mp3_hint": "Descarga el mejor audio disponible y lo convierte a MP3 a 320 kbps. Si ya es MP3, conserva el original para evitar más pérdidas. La conversión no mejora la fuente."
+  "lite_mp3_quality": "MP3 · Mejor audio disponible",
+  "lite_mp3_hint": "Conserva MP3 si está disponible; de lo contrario, descarga el mejor audio y lo convierte a MP3 a 320 kbps. La conversión no mejora la fuente.",
+  "engine_update": "Actualizar motor",
+  "engine_updating": "Buscando actualizaciones del motor yt-dlp…",
+  "engine_ready": "yt-dlp {version} listo. Analiza el enlace de nuevo.",
+  "engine_offline": "No se pudo actualizar. Se conservó el motor {version}; inténtalo más tarde."
 }

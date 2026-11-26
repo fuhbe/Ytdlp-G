@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules, copy_metadata
 from PySide6.QtCore import QLibraryInfo
 
 root = Path(SPECPATH)
@@ -18,7 +18,7 @@ for language in ('pt_BR', 'es'):
 analysis = Analysis(
     [str(root / 'scripts/entry.py')], pathex=[str(root / 'src')],
     binaries=helpers + yt_binaries + ejs_binaries,
-    datas=data + yt_data + ejs_data,
+    datas=data + yt_data + ejs_data + copy_metadata('yt-dlp') + copy_metadata('yt-dlp-ejs'),
     hiddenimports=yt_hidden + ejs_hidden + collect_submodules('ytdlp_g', filter=lambda name: name not in {'ytdlp_g.main_classic', 'ytdlp_g.ui.window'}),
     hookspath=[], hooksconfig={}, runtime_hooks=[str(root / 'scripts/runtime_hook.py')],
     excludes=['ytdlp_g.main_classic', 'ytdlp_g.ui.window', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtQml', 'PySide6.QtQuick', 'tkinter'],

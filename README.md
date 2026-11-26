@@ -28,9 +28,9 @@ Ytdlp-G brings [yt-dlp](https://github.com/yt-dlp/yt-dlp) and
 The controls you need fit on one screen.
 
 - **Videos and playlists:** paste one link and analyze the available formats.
-- **Available qualities:** choose native video or audio formats reported by the source.
+- **Available qualities:** choose real video resolutions reported by the source; video includes sound and is delivered as MP4.
   Playlists show options shared by all accessible items.
-- **High-quality MP3:** download the best available audio and convert it to MP3 at
+- **MP3-only audio:** preserve MP3 when available; otherwise download the best audio and convert it to MP3 at
   320 kbps. Existing MP3 sources are preserved without another lossy conversion.
 - **Files or ZIP:** save regular media files or one ZIP for the link or playlist.
 - **Clear Aero-inspired interface:** light dropdowns, readable selection colors
@@ -39,8 +39,9 @@ The controls you need fit on one screen.
 - **Ready to run:** Python, Qt, yt-dlp, FFmpeg/FFprobe and QuickJS-ng are bundled.
   No Python installation or terminal commands needed.
 
-MP3 conversion cannot improve the original recording. Native audio choices keep
-the source codec, and video is downloaded/remuxed without re-encoding.
+MP3 conversion cannot improve the original recording. MP4 video keeps compatible H.264/AAC streams and converts incompatible codecs when needed. Only source resolutions with available sound are offered.
+
+**Engine updates:** yt-dlp 2026.11.23 is bundled. The app checks for stable updates once per day before analysis/download. Click **Update engine** to check immediately. Official PyPI wheels and matching EJS scripts are verified with SHA256 and installed atomically in user data, without reinstalling the app. Offline failures preserve a working engine. Python/runtime dependency changes can still require a new app release.
 
 ## Download for Windows
 
@@ -63,12 +64,12 @@ are published with the release.
 2. Choose **Content**, **Quality**, and **Regular files** or **ZIP only**.
 3. Choose your destination folder and click **Download**.
 
-For MP3, select **Audio only → Quality → MP3 · High quality** after analysis.
+For MP3, select **Audio only → MP3 · Best available audio** after analysis.
 This works with single links, playlists and ZIP output.
 
 Large playlists take longer to analyze because each accessible item is checked.
 You can cancel analysis or a download. Unavailable items and failures are reported;
-the app does not silently substitute another native quality.
+the app does not silently substitute another resolution.
 
 ZIP files are verified using SHA256/CRC before temporary media is removed.
 On failure or cancellation, partial files are preserved in `.ytdlp-g` inside the
@@ -77,19 +78,9 @@ depends on yt-dlp and the source; login-required or restricted content may not w
 
 ## Tested Windows packages
 
-Release **1.2.0** passed the [recorded Windows validation](docs/VALIDATION.md):
+Release **1.3.0** is published only after Windows tests, lint, packaged/portable/installed executable checks, and installation/uninstallation succeed. The smoke checks install an official engine update and verify that frozen workers actually load it. Media coverage includes MP3 encoding and preservation, mixed-codec adaptive video/audio merging to MP4, source resolution selection, playlists and ZIP integrity.
 
-- **78 tests passed**, with no failures or skips.
-- **19 functional smoke checks** passed for each of the packaged app, extracted
-  portable ZIP and installed app.
-- Inno Setup installation and uninstallation passed.
-- Checks include real MP3 conversion, preserved MP3 originals, playlist/ZIP
-  downloads and dropdown readability with a dark system palette.
-
-Tests use generated media and a local HTTP server. They do not establish support
-for every external website or replace manual testing across Windows devices,
-DPI settings and assistive technologies. See the [validation report](docs/VALIDATION.md)
-and [recorded test results](docs/validation/windows-build-10).
+See the [validation report](docs/VALIDATION.md) and the release's `Ytdlp-G-validation.zip` for results. Tests use generated media and a local HTTP server. A live YouTube check in the development environment was blocked by its proxy (HTTP 403); live YouTube downloading was not validated here. Support for individual websites depends on yt-dlp and source availability.
 
 ## Build and contribute
 

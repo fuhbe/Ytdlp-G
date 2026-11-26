@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0 — Updating engine, MP4 with sound and MP3-only audio
+
+- Bundle yt-dlp 2026.11.23 and check for stable engine updates daily before network operations.
+- Add an **Update engine** button; verify downloads with SHA256 and install matching EJS scripts atomically in user data. Retain a working engine when offline or an update cannot load.
+- Show only actual video resolutions with audio, including separate adaptive streams, and always deliver MP4. Normalize incompatible codecs to H.264/AAC when necessary.
+- Offer MP3 as the only audio output: prefer existing MP3; otherwise convert the best available audio to MP3 at 320 kbps.
+- Test mixed-codec adaptive streams, playlists, ZIPs, update integrity and frozen engine activation.
+
 ## 1.2.0 — High-quality MP3 and readable menus
 
 - Add **MP3 · High quality** to the audio quality menu: download the best

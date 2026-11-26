@@ -16,30 +16,7 @@ from .paths import safe_name, validate_url
 
 
 def extraction_options():
-    options = base_options()
-    for name in ("qjs", "deno"):
-        try:
-            options["js_runtimes"] = {
-                "quickjs" if name == "qjs" else name: {"path": executable(name)}
-            }
-            break
-        except ValueError:
-            continue
-    return options
-
-
-def audio_codec(value):
-    value = str(value or "").lower()
-    for prefixes, family in (
-        (("mp4a", "aac"), "aac"),
-        (("opus",), "opus"),
-        (("vorbis",), "vorbis"),
-        (("mp3", "mpga"), "mp3"),
-        (("flac",), "flac"),
-    ):
-        if value.startswith(prefixes):
-            return family
-    return ""
+    return base_options()
 
 
 def usable_formats(info):
@@ -128,115 +105,42 @@ def enrich_metadata(info):
 
 
 def quality_catalog(info):
-    """Build native stream choices and one explicit best-audio MP3 conversion.
-
-    Video keys represent a real resolution/container, audio keys represent the
-    ordered native audio qualities of a codec. Intersection works across lists
-    without assuming format IDs or a fixed bitrate shared by different videos.
-    """
+    """Offer actual source resolutions with sound, always delivered as MP4/MP3."""
     formats = usable_formats(info)
     pure_audio = [
-        f for f in formats if f.get("vcodec") in {None, "none"} and audio_codec(f.get("acodec"))
+        f for f in formats if f.get("vcodec") == "none" and f.get("acodec") not in {None, "none"}
     ]
-    choices = {}
-    video_groups = {}
+    # yt-dlp sorts formats from worst to best, accounting for codec, channels,
+    # bitrate and source preferences. Preserve that ranking for separate sound.
+    best_audio = pure_audio[-1] if pure_audio else None
+    choices, scores = {}, {}
     for video in formats:
         height = video.get("height")
         if not height or video.get("vcodec") in {None, "none"}:
             continue
-        height = int(height)
-        if height <= 0:
+        if int(height) <= 0:
             continue
         combined = video.get("acodec") not in {None, "none"}
-        ext = video.get("ext")
-        if ext not in {"mp4", "webm", "mkv", "mov"}:
+        if not combined and not best_audio:
             continue
-        if combined or not pure_audio:
-            pairs = [(ext, "")]
-        else:
-            pairs = []
-            for audio in pure_audio:
-                family = audio_codec(audio.get("acodec"))
-                if ext in {"mp4", "mov"} and family == "aac":
-                    container = "mp4"
-                elif ext == "webm" and family in {"opus", "vorbis"}:
-                    container = "webm"
-                else:
-                    container = "mkv"
-                pairs.append((container, str(audio["format_id"])))
-        for container, audio_id in pairs:
-            key = f"video:{container}:{height}"
-            h264 = str(video.get("vcodec", "")).startswith(("avc", "h264"))
-            audio = next((a for a in pure_audio if str(a["format_id"]) == audio_id), {})
-            score = (
-                h264,
-                float(video.get("fps") or 0),
-                float(audio.get("abr") or 0),
-                float(video.get("tbr") or 0),
-            )
-            if key not in video_groups or score > video_groups[key][0]:
-                video_groups[key] = (
-                    score,
-                    {
-                        "key": key,
-                        "kind": "video",
-                        "height": height,
-                        "container": container,
-                        "video_stream": str(video["format_id"]),
-                        "audio_stream": audio_id,
-                        "codec": str(video.get("vcodec") or ""),
-                    },
-                )
-    choices.update({key: value[1] for key, value in video_groups.items()})
-    audio_groups = {}
-    # If there are no audio-only streams, extract the existing audio losslessly.
-    for fmt in pure_audio or [f for f in formats if audio_codec(f.get("acodec"))]:
-        family = audio_codec(fmt.get("acodec"))
-        audio_groups.setdefault(family, []).append(fmt)
-    for family, candidates in audio_groups.items():
-        ordered = sorted(
-            candidates,
-            key=lambda f: (
-                float(f.get("abr") or 0),
-                float(f.get("asr") or 0),
-                float(f.get("tbr") or 0),
-            ),
-            reverse=True,
+        key = f"video:mp4:{int(height)}"
+        score = (
+            str(video.get("vcodec", "")).startswith(("avc", "h264")),
+            float(video.get("fps") or 0),
+            float(video.get("tbr") or 0),
         )
-        seen = set()
-        rank = 0
-        for fmt in ordered:
-            # Repeated language/transport variants with identical quality do not
-            # create dozens of indistinguishable controls in the compact window.
-            bitrate = round(float(fmt.get("abr") or 0))
-            fingerprint = (bitrate, fmt.get("asr"))
-            if fingerprint in seen:
-                continue
-            seen.add(fingerprint)
-            container = {
-                "aac": "m4a",
-                "opus": "opus",
-                "vorbis": "ogg",
-                "mp3": "mp3",
-                "flac": "flac",
-                "wav": "wav",
-            }[family]
-            key = f"audio:{family}:{rank}"
+        if key not in scores or score > scores[key]:
+            scores[key] = score
             choices[key] = {
                 "key": key,
-                "kind": "audio",
-                "container": container,
-                "bitrate_min": bitrate,
-                "bitrate_max": bitrate,
-                "audio_stream": str(fmt["format_id"]),
-                "video_stream": "",
-                "codec": family,
+                "kind": "video",
+                "height": int(height),
+                "container": "mp4",
+                "video_stream": str(video["format_id"]),
+                "audio_stream": "" if combined else str(best_audio["format_id"]),
+                "codec": str(video.get("vcodec") or ""),
             }
-            rank += 1
     if any(fmt.get("acodec") not in {None, "none"} for fmt in formats):
-        # An explicit conversion, not a bitrate claimed to exist at the source.
-        # Leave the stream unset: yt-dlp selects bestaudio/best independently for
-        # each item, including playlists whose native audio codecs differ.
         choices["audio:mp3:convert"] = {
             "key": "audio:mp3:convert",
             "kind": "audio",
@@ -391,14 +295,8 @@ def download_lite(payload, emit=lambda data: None):
                 raise ValueError("format_unavailable")
             options = Options(
                 kind=selected["kind"],
-                container=(
-                    "mp3"
-                    if selected.get("conversion")
-                    else "original"
-                    if selected["kind"] == "audio"
-                    else selected["container"]
-                ),
-                bitrate=320 if selected.get("conversion") else 192,
+                container=selected["container"],
+                bitrate=320,
                 audio_stream=selected["audio_stream"],
                 video_stream=selected["video_stream"],
                 metadata=False,

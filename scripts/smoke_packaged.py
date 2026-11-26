@@ -86,7 +86,11 @@ def run_smoke(package, report):
             evidence["checks"].append(action)
             return results[-1]
 
+        update = worker("engine_update", {})
+        assert update["status"] in {"updated", "current"} and update.get("path"), update
+        evidence["engine_update"] = {key: update[key] for key in ("version", "status")}
         health = worker("health", {})
+        assert health["engine_source"] == "managed", health
         assert all(
             health.get(tool, "dependency_missing") != "dependency_missing"
             for tool in ("ffmpeg", "ffprobe", "quickjs")
@@ -171,19 +175,19 @@ def run_smoke(package, report):
         try:
             url = f"http://127.0.0.1:{server.server_port}/authorized%20sample.mp4"
             lite = worker("lite_inspect", {"url": url})
-            assert {c["key"] for c in lite["choices"]} >= {"video:mp4:90", "audio:aac:0"}
+            assert {c["key"] for c in lite["choices"]} >= {"video:mp4:90", "audio:mp3:convert"}
             native = worker(
                 "lite_download",
                 {
                     "analysis": lite,
-                    "quality": "audio:aac:0",
+                    "quality": "audio:mp3:convert",
                     "mode": "normal",
                     "destination": str(root / "lite audio"),
                 },
             )
             native_info = worker("probe", {"source": native["files"][0]})
             assert len(native_info["streams"]) == 1
-            assert native_info["streams"][0]["codec_name"] == "aac"
+            assert native_info["streams"][0]["codec_name"] == "mp3"
             lite_zip = worker(
                 "lite_download",
                 {
@@ -196,6 +200,15 @@ def run_smoke(package, report):
             assert len(lite_zip["files"]) == 1 and lite_zip["files"][0].endswith(".zip")
             with zipfile.ZipFile(lite_zip["files"][0]) as archive:
                 assert len(archive.namelist()) == 1 and archive.testzip() is None
+            with zipfile.ZipFile(lite_zip["files"][0]) as archive:
+                archive.extractall(root / "verify mp4")
+                video_path = root / "verify mp4" / archive.namelist()[0]
+            video_info = worker("probe", {"source": str(video_path)})
+            assert video_path.suffix == ".mp4"
+            assert {s["codec_type"] for s in video_info["streams"]} == {"video", "audio"}
+            assert (
+                next(s for s in video_info["streams"] if s["codec_type"] == "video")["height"] == 90
+            )
             assert list((root / "lite zip").rglob("*.mp4")) == []
             (root / "playlist.html").write_text(
                 '<html><head><title>Two videos</title></head><body><video src="authorized%20sample.mp4" controls></video><video src="authorized%20sample.mp4?second" controls></video></body></html>',
@@ -209,7 +222,7 @@ def run_smoke(package, report):
                 "lite_download",
                 {
                     "analysis": playlist,
-                    "quality": "audio:aac:0",
+                    "quality": "audio:mp3:convert",
                     "mode": "zip",
                     "destination": str(root / "playlist zip"),
                 },
@@ -217,7 +230,7 @@ def run_smoke(package, report):
             assert playlist_zip["completed"] == 2
             with zipfile.ZipFile(playlist_zip["files"][0]) as archive:
                 assert len(archive.namelist()) == 2 and archive.testzip() is None
-                assert all(name.endswith(".m4a") for name in archive.namelist())
+                assert all(name.endswith(".mp3") for name in archive.namelist())
             mp3 = worker(
                 "lite_download",
                 {

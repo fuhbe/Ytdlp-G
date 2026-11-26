@@ -7,7 +7,7 @@ Copy-Item 'docs' 'dist/Ytdlp-G/docs' -Recurse -Force
 Copy-Item 'build/dependencies/licenses' 'dist/Ytdlp-G/licenses' -Recurse -Force
 Copy-Item 'assets/licenses' 'dist/Ytdlp-G/licenses/upstream' -Recurse -Force
 Invoke-Checked $Python @('scripts/collect_licenses.py', 'dist/Ytdlp-G/licenses/python')
-$Metadata = @{ version = '1.2.0'; built_utc = [DateTime]::UtcNow.ToString('o'); commit = $env:GITHUB_SHA; signed = $false }
+$Metadata = @{ version = '1.3.0'; built_utc = [DateTime]::UtcNow.ToString('o'); commit = $env:GITHUB_SHA; signed = $false }
 $Metadata | ConvertTo-Json | Set-Content 'dist/Ytdlp-G/build-metadata.json' -Encoding UTF8
 Invoke-Checked $Python @('scripts/smoke_packaged.py', 'dist/Ytdlp-G', '--report', 'build/packaged-smoke.json')
 New-Item -ItemType Directory -Force 'artifacts' | Out-Null

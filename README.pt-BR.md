@@ -14,18 +14,17 @@ Não é necessário instalar Python.
 2. Escolha conteúdo, qualidade disponível e arquivos normais ou ZIP.
 3. Escolha a pasta e clique em **Baixar**.
 
-Para MP3, escolha **Somente áudio → Qualidade → MP3 · Alta qualidade**. O app
-baixa o melhor áudio disponível e converte para MP3 a 320 kbps; fontes já em MP3
-são preservadas sem nova conversão. Converter não melhora a qualidade original.
-Playlists mostram qualidades nativas comuns aos itens acessíveis.
+**Vídeo:** escolha uma resolução disponível. O arquivo final é MP4 com áudio; faixas separadas são unidas e codecs incompatíveis são convertidos para H.264/AAC.
+
+**Somente áudio:** a saída é sempre MP3. Preserva MP3 quando disponível; caso contrário, baixa o melhor áudio e converte para MP3 a 320 kbps. Converter não melhora a qualidade original. Funciona também com playlists e ZIP.
+
+**Atualização do motor:** yt-dlp 2026.11.23 incluído, com verificação de novas versões estáveis uma vez por dia antes de analisar/baixar. Clique em **Atualizar motor** para verificar imediatamente. Não precisa reinstalar o app. Downloads oficiais do PyPI têm SHA256 verificado e scripts EJS correspondentes; falhas mantêm um motor utilizável.
 
 No portátil, extraia todo o ZIP e abra `Ytdlp-G.exe`, mantendo as pastas e arquivos
 ao lado dele. Os pacotes não são assinados e podem mostrar aviso do SmartScreen.
 Windows 7 não é suportado; apenas o visual é inspirado nele.
 
-A versão 1.2.0 passou por 78 testes no Windows e 19 verificações funcionais em
-cada pacote, portátil e instalação. Consulte o [relatório](docs/VALIDATION.md).
-O suporte a sites depende do yt-dlp e da disponibilidade da fonte.
+A versão 1.3.0 é publicada após testes e verificações funcionais dos pacotes Windows. Consulte o [relatório](docs/VALIDATION.md) e `Ytdlp-G-validation.zip` no release. Os testes usam mídia gerada e servidor local. A tentativa de testar YouTube neste ambiente foi bloqueada pelo proxy (HTTP 403), portanto download real do YouTube não foi validado aqui. O suporte a sites depende do yt-dlp, da rede e da fonte.
 
 [Código e guia completo em inglês](README.md) · [Reportar problema](https://github.com/fuhbe/Ytdlp-G/issues/new/choose).
 Código próprio: [MIT](LICENSE); [dependências com licenças próprias](THIRD_PARTY_NOTICES.md).

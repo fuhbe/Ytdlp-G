@@ -29,7 +29,6 @@ def main():
             pass
     from . import __version__
     from .archive import create_zip
-    from .downloader import download, error_code, inspect
     from .media import convert, probe, version
 
     try:
@@ -39,7 +38,21 @@ def main():
         def progress(data):
             emit("progress", data)
 
-        if action == "lite_inspect":
+        from .engine import activate_engine, prepare_engine
+
+        engine = activate_engine(
+            prepare_engine(
+                force=action == "engine_update",
+                check=action
+                in {"engine_update", "lite_inspect", "lite_download", "inspect", "download"},
+                progress=progress,
+            )
+        )
+        from .downloader import download, inspect
+
+        if action == "engine_update":
+            result = engine
+        elif action == "lite_inspect":
             from .lite import inspect_lite
 
             result = inspect_lite(payload["url"], progress)
@@ -64,6 +77,7 @@ def main():
                 "app": __version__,
                 "yt-dlp": yt_dlp.version.__version__,
                 "python": sys.version.split()[0],
+                "engine_source": "managed" if engine.get("path") else "bundled",
             }
             from yt_dlp.utils._jsruntime import QuickJsRuntime
 
@@ -85,6 +99,8 @@ def main():
             raise ValueError("invalid_options")
         emit("result", result)
     except BaseException as exc:
+        from .downloader import error_code
+
         # Stack function names help diagnostics without disclosing URLs or paths.
         emit(
             "error",

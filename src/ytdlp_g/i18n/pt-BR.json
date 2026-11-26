@@ -173,7 +173,7 @@
   "ffmpeg": "Executável FFmpeg (vazio = automático)",
   "ffprobe": "Executável FFprobe (vazio = automático)",
   "manual_update": "Atualização manual assistida",
-  "update_notice": "Atualize pelo instalador de uma origem confiável. Confira assinatura e hash publicados pelo distribuidor. Esta versão não executa atualizações remotas. Alguns sites exigem JavaScript (Deno) e podem restringir acesso.",
+  "update_notice": "Verificando atualização do motor yt-dlp…",
   "profile_name": "Nome do perfil",
   "save_profile": "Salvar opções atuais como perfil",
   "delete_profile": "Excluir perfil personalizado",
@@ -256,7 +256,7 @@
   "lite_heading": "Baixar um vídeo ou playlist",
   "lite_url_hint": "Cole o link do vídeo ou da playlist",
   "lite_instruction": "Cole um link e clique em Analisar.",
-  "lite_available_notice": "Apenas qualidades disponíveis. Em playlists, opções comuns a todos os itens acessíveis.",
+  "lite_available_notice": "Vídeo com áudio em MP4 · Somente áudio em MP3. Qualidades disponíveis na fonte.",
   "lite_folder": "Salvar em",
   "lite_analyzing": "Analisando qualidades disponíveis…",
   "lite_choose_quality": "Escolha a qualidade e clique em Baixar.",
@@ -267,6 +267,10 @@
   "lite_checking": "Verificando disponibilidade…",
   "lite_close_active": "Cancelar a operação e fechar? Arquivos já baixados serão preservados.",
   "lite_no_common": "Não há uma qualidade comum a todos os itens. Baixe os links separadamente.",
-  "lite_mp3_quality": "MP3 · Alta qualidade",
-  "lite_mp3_hint": "Baixa o melhor áudio disponível e converte para MP3 a 320 kbps. Se já for MP3, preserva o original para evitar novas perdas. A conversão não melhora a fonte."
+  "lite_mp3_quality": "MP3 · Melhor áudio disponível",
+  "lite_mp3_hint": "Preserva MP3 quando disponível; caso contrário, baixa o melhor áudio e converte para MP3 a 320 kbps. A conversão não melhora a fonte.",
+  "engine_update": "Atualizar motor",
+  "engine_updating": "Verificando atualização do motor yt-dlp…",
+  "engine_ready": "Motor yt-dlp {version} pronto. Analise o link novamente.",
+  "engine_offline": "Não foi possível atualizar agora. Motor {version} mantido; tente novamente."
 }

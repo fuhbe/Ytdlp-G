@@ -38,7 +38,7 @@ def test_worker_result_arrives_on_gui_thread_without_stdout(qapp):
     task.start()
     wait_until(qapp, lambda: bool(done))
     assert not errors
-    assert received[0][0]["app"] == "1.2.0"
+    assert received[0][0]["app"] == "1.3.0"
     assert received[0][1] == qapp.thread()
     task.deleteLater()
 

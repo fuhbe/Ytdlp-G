@@ -173,7 +173,7 @@
   "ffmpeg": "FFmpeg executable (empty = automatic)",
   "ffprobe": "FFprobe executable (empty = automatic)",
   "manual_update": "Assisted manual update",
-  "update_notice": "Update using an installer from a trusted source. Check the signature and hash published by the distributor. This version does not execute remote updates. Some sites require JavaScript (Deno) and may restrict access.",
+  "update_notice": "Checking for yt-dlp engine updates…",
   "profile_name": "Profile name",
   "save_profile": "Save current options as profile",
   "delete_profile": "Delete custom profile",
@@ -256,7 +256,7 @@
   "lite_heading": "Download a video or playlist",
   "lite_url_hint": "Paste a video or playlist link",
   "lite_instruction": "Paste a link and click Analyze.",
-  "lite_available_notice": "Available qualities only. Playlists show options shared by all accessible items.",
+  "lite_available_notice": "Video with sound as MP4 · Audio only as MP3. Available source qualities.",
   "lite_folder": "Save to",
   "lite_analyzing": "Checking available qualities…",
   "lite_choose_quality": "Choose a quality and click Download.",
@@ -267,6 +267,10 @@
   "lite_checking": "Checking availability…",
   "lite_close_active": "Cancel and close? Downloaded files will be preserved.",
   "lite_no_common": "No quality is shared by all items. Download the links separately.",
-  "lite_mp3_quality": "MP3 · High quality",
-  "lite_mp3_hint": "Downloads the best available audio and converts it to MP3 at 320 kbps. Existing MP3 audio is preserved to avoid further loss. Conversion does not improve the source."
+  "lite_mp3_quality": "MP3 · Best available audio",
+  "lite_mp3_hint": "Preserves MP3 when available; otherwise downloads the best audio and converts it to MP3 at 320 kbps. Conversion does not improve the source.",
+  "engine_update": "Update engine",
+  "engine_updating": "Checking for yt-dlp engine updates…",
+  "engine_ready": "yt-dlp {version} ready. Analyze the link again.",
+  "engine_offline": "Update unavailable. Kept engine {version}; try again later."
 }

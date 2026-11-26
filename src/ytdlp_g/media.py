@@ -239,3 +239,77 @@ def convert(payload, progress=lambda event: None):
         )
         result = publish(output, destination / name)
     return {"files": [str(result)], "progress": 100}
+
+
+def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe=""):
+    """Verify sound and normalize incompatible source codecs to H.264/AAC MP4."""
+    source = Path(source)
+    info = probe(source, ffprobe)
+    streams = info.get("streams", [])
+    video = next(
+        (
+            s
+            for s in streams
+            if s.get("codec_type") == "video" and not s.get("disposition", {}).get("attached_pic")
+        ),
+        None,
+    )
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    if not video or (require_audio and not audio):
+        raise ValueError("format_unavailable")
+    copy_video = video.get("codec_name") == "h264" and video.get("pix_fmt") in {
+        "yuv420p",
+        "yuvj420p",
+    }
+    copy_audio = not audio or audio.get("codec_name") == "aac"
+    if source.suffix.lower() == ".mp4" and copy_video and copy_audio:
+        return source
+    with tempfile.TemporaryDirectory(dir=source.parent, prefix=".mp4-") as temporary:
+        output = Path(temporary) / "output.mp4"
+        args = [
+            executable("ffmpeg", ffmpeg),
+            "-v",
+            "error",
+            "-nostdin",
+            "-n",
+            "-i",
+            str(source),
+            "-map",
+            "0:V:0",
+            "-map",
+            "0:a:0?",
+            "-c:v",
+            "copy" if copy_video else "libx264",
+        ]
+        if not copy_video:
+            args += [
+                "-crf",
+                "18",
+                "-preset",
+                "medium",
+                "-pix_fmt",
+                "yuv420p",
+                "-vf",
+                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            ]
+        args += ["-c:a", "copy" if copy_audio else "aac"]
+        if not copy_audio:
+            args += ["-b:a", "320k"]
+        args += ["-map_metadata", "0", "-map_chapters", "0", "-movflags", "+faststart", str(output)]
+        # No artificial encoding timeout: long/high-resolution files may take time.
+        result = subprocess.run(
+            args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **hidden_process()
+        )
+        if result.returncode:
+            raise ValueError("conversion_failed")
+        final = probe(output, ffprobe)
+        types = {s.get("codec_type") for s in final["streams"]}
+        if "video" not in types or (require_audio and "audio" not in types):
+            raise ValueError("media_invalid")
+        target = source.with_suffix(".mp4")
+        if target != source and target.exists():
+            raise ValueError("conversion_failed")
+        os.replace(output, target)
+        if source != target:
+            source.unlink()
+    return target

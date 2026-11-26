@@ -91,6 +91,8 @@ class LiteWindow(QWidget):
         heading = self.text("lite_heading")
         heading.setObjectName("heading")
         top.addWidget(heading, 1)
+        self.engine_button = self.button("engine_update", self.update_engine)
+        top.addWidget(self.engine_button)
         self.language = QComboBox()
         for code, text in (("pt-BR", "PT-BR"), ("en", "EN"), ("es", "ES")):
             self.language.addItem(text, code)
@@ -251,6 +253,7 @@ class LiteWindow(QWidget):
             self.url,
             self.paste,
             self.analyze_button,
+            self.engine_button,
             self.kind,
             self.output,
             self.destination,
@@ -273,6 +276,23 @@ class LiteWindow(QWidget):
         self.quality.setEnabled(False)
         self.summary.setText(self.tr("lite_instruction"))
         self.update_download_enabled()
+
+    def update_engine(self):
+        if self.tasks:
+            return
+        self.progress.setRange(0, 0)
+
+        def result(data):
+            self.invalidate()
+            self.progress.setRange(0, 100)
+            key = (
+                "engine_offline"
+                if data["status"] in {"offline", "fallback", "busy"}
+                else "engine_ready"
+            )
+            self.status.setText(self.tr(key, version=data["version"]))
+
+        self.run_task("engine_update", {}, result)
 
     def analyze(self):
         if self.tasks:
@@ -381,6 +401,7 @@ class LiteWindow(QWidget):
     def on_progress(self, data):
         phase = data.get("phase") or data.get("status", "running")
         key = {
+            "engine_updating": "engine_updating",
             "analyzing": "lite_analyzing",
             "checking": "lite_checking",
             "running": "running",
@@ -394,7 +415,7 @@ class LiteWindow(QWidget):
         )
         self.status.setText(self.tr(key) + (f" · {current}/{total or '?'}" if current else ""))
         if (
-            phase in {"analyzing", "checking", "processing"}
+            phase in {"engine_updating", "analyzing", "checking", "processing"}
             or phase == "running"
             and not data.get("total")
         ):
