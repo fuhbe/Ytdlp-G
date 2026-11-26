@@ -41,16 +41,17 @@ def enrich_metadata(info):
     URLs and headers remain in worker memory, outside the returned catalog.
     """
     formats = info.get("formats") or [info]
-    for fmt in formats:
+
+    def fill(fmt):
         if (
             fmt.get("vcodec") is not None
             and fmt.get("acodec") is not None
             and (fmt.get("vcodec") == "none" or fmt.get("height"))
         ):
-            continue
+            return
         source = fmt.get("url")
         if not source or fmt.get("has_drm"):
-            continue
+            return
         try:
             source = validate_url(source)
             headers = fmt.get("http_headers") or info.get("http_headers") or {}
@@ -70,15 +71,16 @@ def enrich_metadata(info):
             ]
             if header_text:
                 args += ["-headers", header_text]
-            result = subprocess.run(
-                args + ["-show_streams", "-of", "json", source],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                **hidden_process(),
-            )
+            with turbo.analysis_slots:
+                result = subprocess.run(
+                    args + ["-show_streams", "-of", "json", source],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    **hidden_process(),
+                )
             if result.returncode:
-                continue
+                return
             streams = json.loads(result.stdout).get("streams", [])
             video = next(
                 (
@@ -100,7 +102,12 @@ def enrich_metadata(info):
             )
             fmt.setdefault("format_id", "direct")
         except (ValueError, OSError, subprocess.TimeoutExpired):
-            continue
+            return
+
+    if len(formats) == 1:
+        fill(formats[0])
+    else:
+        list(turbo.ordered_map(fill, formats, 2))
     info["formats"] = formats
     return info
 
@@ -271,6 +278,11 @@ def _inspect(url, emit):
                     "url": item_url,
                     "title": entry.get("title") or title,
                     "index": index,
+                    "traits": {
+                        k: [c.get("fps") or 0, c.get("hdr", False)]
+                        for k, c in catalog.items()
+                        if c["kind"] == "video"
+                    },
                     "source_index": source_index,
                 }
             except (yt_dlp.utils.DownloadError, ValueError):
@@ -355,6 +367,11 @@ def download_lite(payload, emit=lambda data: None):
                     refresh=bool(attempt) or not analysis.get("catalog_version"),
                 )
                 selected = quality_catalog(fresh).get(key)
+                fps, hdr = item.get("traits", {}).get(key, [0, False])
+                if selected and (
+                    float(selected.get("fps") or 0) < fps or hdr and not selected.get("hdr")
+                ):
+                    raise ValueError("format_unavailable")
                 if not selected:
                     raise ValueError("format_unavailable")
                 options = Options(
@@ -403,7 +420,7 @@ def download_lite(payload, emit=lambda data: None):
                 emit({"phase": "checking", "current": number, "total": total})
 
     for completed, error in turbo.ordered_map(
-        one, enumerate(analysis["items"], 1), turbo.prefs["downloads"]
+        one, enumerate(analysis["items"], 1), turbo.prefs["downloads"] + turbo.prefs["conversions"]
     ):
         files.extend(completed)
         if error:
@@ -412,13 +429,14 @@ def download_lite(payload, emit=lambda data: None):
         raise ValueError(failures[0]["code"] if failures else "no_output")
     if mode == "zip":
         emit({"phase": "archiving", "progress": 0})
-        archive = create_zip(
+        archive = turbo.zip_pool.submit(
+            create_zip,
             files,
             destination / (safe_name(analysis["title"]) + ".zip"),
             compression=0,
             subfolders=True,
             progress=lambda event: emit(event | {"phase": "archiving"}),
-        )
+        ).result()
         files = [str(archive)]
         # Files are removed only after SHA256/CRC validation and final publication.
         shutil.rmtree(working)

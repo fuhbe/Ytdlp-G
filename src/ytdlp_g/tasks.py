@@ -138,6 +138,10 @@ class QueueManager(QObject):
         super().__init__(parent)
         self.db, self.settings = database, settings
         self.active = {}
+        self.pending_progress = {}
+        self.progress_timer = QTimer(self)
+        self.progress_timer.setSingleShot(True)
+        self.progress_timer.timeout.connect(self.flush_progress)
         self.enabled = False
         self.timer = QTimer(self)
         self.timer.setInterval(500)
@@ -167,10 +171,19 @@ class QueueManager(QObject):
 
     def on_progress(self, identifier, data):
         allowed = {"status", "progress", "downloaded", "total", "speed", "eta", "estimated"}
-        self.db.update(identifier, **{key: value for key, value in data.items() if key in allowed})
+        self.pending_progress.setdefault(identifier, {}).update(
+            {key: value for key, value in data.items() if key in allowed}
+        )
+        if not self.progress_timer.isActive():
+            self.progress_timer.start(150)
+
+    def flush_progress(self):
+        self.db.update_progress(self.pending_progress)
+        self.pending_progress.clear()
         self.changed.emit()
 
     def on_result(self, identifier, data):
+        self.pending_progress.pop(identifier, None)
         self.db.update(
             identifier,
             status="completed",
@@ -183,6 +196,7 @@ class QueueManager(QObject):
         self.notification.emit("download_completed")
 
     def on_error(self, identifier, data):
+        self.pending_progress.pop(identifier, None)
         self.db.update(
             identifier,
             status="cancelled" if data["code"] == "cancelled" else "failed",

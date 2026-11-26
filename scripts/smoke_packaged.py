@@ -183,6 +183,8 @@ def run_smoke(package, report):
                 listener.settimeout(25)
                 token = secrets.token_hex(32)
                 opts = process_options | {"env": environment | {"YTDLPG_SESSION_KEY": token}}
+                opts.pop("capture_output", None)
+                opts.update(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 with subprocess.Popen(
                     [str(executable), "--session", str(listener.getsockname()[1])], **opts
                 ) as child:

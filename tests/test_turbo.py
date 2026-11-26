@@ -116,3 +116,54 @@ def test_bounded_large_playlist_order():
 
     assert list(turbo.ordered_map(analyze, range(100), 3)) == list(range(100))
     assert 1 < state[1] <= 3
+
+
+@pytest.mark.parametrize("http_status", [403, 429])
+def test_expired_media_url_reextracts_once(http_status, tmp_path, media_url, media_file):
+    import http.server
+
+    with http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), http.server.BaseHTTPRequestHandler
+    ) as server:
+
+        class Denied(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_error(http_status)
+
+            def log_message(self, *args):
+                pass
+
+        server.RequestHandlerClass = Denied
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            analysis = lite.inspect_lite(media_url)
+
+            def stale():
+                info = lite.full_info(media_url)
+                return info
+
+            info = stale()
+            for fmt in info["formats"]:
+                fmt["url"] = f"http://127.0.0.1:{server.server_port}/expired"
+            info["url"] = info["formats"][0]["url"]
+            turbo.cached(("info", media_url, None), lambda: info, refresh=True)
+            result = lite.download_lite(
+                dict(
+                    analysis=analysis,
+                    quality="video:mp4:90",
+                    mode="normal",
+                    destination=str(tmp_path),
+                )
+            )
+            assert result["completed"] == 1
+            assert Path(result["files"][0]).is_file()
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def test_native_cache_excludes_auth_material():
+    with turbo.youtube_dl(lite.extraction_options()) as ydl:
+        ydl.cache.store("test-credentials", "session", "private")
+        assert ydl.cache.load("test-credentials", "session") is None

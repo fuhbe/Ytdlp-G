@@ -105,6 +105,17 @@ class Database:
                 (*values.values(), identifier),
             )
 
+    def update_progress(self, changes):
+        allowed = {"status", "progress", "downloaded", "total", "speed", "eta", "estimated"}
+        with self.connection:
+            for identifier, values in changes.items():
+                if not values or not values.keys() <= allowed:
+                    continue
+                self.connection.execute(
+                    "UPDATE jobs SET " + ",".join(k + "=?" for k in values) + " WHERE id=?",
+                    (*values.values(), identifier),
+                )
+
     def jobs(self, search=""):
         rows = self.connection.execute(
             "SELECT * FROM jobs WHERE title LIKE ? OR url LIKE ? ORDER BY priority DESC,created",

@@ -23,6 +23,10 @@ DEFAULTS = dict(
 PROFILES = {"eco": 2, "balanced": 4, "fast": 8, "turbo": 16}
 prefs = DEFAULTS.copy()
 conversion_slots = threading.BoundedSemaphore(1)
+download_slots = threading.BoundedSemaphore(2)
+disk_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="publish")
+zip_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="archive")
+analysis_slots = threading.BoundedSemaphore(4)
 network_level = 4
 lock = threading.RLock()
 entries = OrderedDict()
@@ -32,7 +36,7 @@ last_clean = 0.0
 
 
 def configure(values):
-    global conversion_slots
+    global conversion_slots, download_slots
     previous = prefs.copy()
     for key in DEFAULTS:
         value = values.get(key, DEFAULTS[key])
@@ -44,6 +48,7 @@ def configure(values):
     if previous != prefs:
         invalidate()
     conversion_slots = threading.BoundedSemaphore(prefs["conversions"])
+    download_slots = threading.BoundedSemaphore(prefs["downloads"])
 
 
 def connections():
@@ -165,6 +170,14 @@ def youtube_dl(options):
     ydl = yt_dlp.YoutubeDL(options)
     if hasattr(ydl, "cache"):
         ydl.cache = PlayerCache(ydl)
+    if hasattr(ydl, "dl"):
+        transfer = ydl.dl
+
+        def download(*args, **kwargs):
+            with download_slots:
+                return transfer(*args, **kwargs)
+
+        ydl.dl = download
     if hasattr(ydl, "run_pp"):
         run = ydl.run_pp
 

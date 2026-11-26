@@ -3,6 +3,7 @@
 import json
 import shutil
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 import yt_dlp  # noqa: F401 (public adapter reference)
@@ -21,15 +22,20 @@ class QuietLogger:
     info = warning = error = debug
 
 
-def base_options():
+@lru_cache(maxsize=1)
+def runtime_paths():
     runtimes = {}
     for name, key in (("deno", "deno"), ("qjs", "quickjs")):
         try:
             runtimes[key] = {"path": executable(name)}
         except ValueError:
             continue
+    return runtimes
+
+
+def base_options():
     return {
-        "js_runtimes": runtimes,
+        "js_runtimes": runtime_paths().copy(),
         "quiet": True,
         "no_warnings": True,
         "logger": QuietLogger(),
@@ -390,15 +396,18 @@ def download(
     if options.output_mode in {"normal", "both"}:
         for source in files:
             target = folder / (prefix + safe_name(source.stem, 110) + source.suffix)
-            published.append(str(publish(source, target, immutable=True)))
+            published.append(
+                str(turbo.disk_pool.submit(publish, source, target, immutable=True).result())
+            )
     if options.output_mode in {"zip", "both"}:
         emit({"status": "archiving", "progress": 0})
-        result = create_zip(
+        result = turbo.zip_pool.submit(
+            create_zip,
             files,
             folder / (prefix + safe_name(info.get("title", "download")) + ".zip"),
             options.compression,
             progress=emit,
-        )
+        ).result()
         published.append(str(result))
     shutil.rmtree(stage)
     # Sensitive URL query values are never put in progress or diagnostics.
