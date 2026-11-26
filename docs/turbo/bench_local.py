@@ -87,7 +87,7 @@ with tempfile.TemporaryDirectory() as d:
             lambda: lite.download_lite(
                 dict(
                     analysis=a,
-                    quality="video:mp4:360",
+                    quality="video:best",
                     mode="normal",
                     destination=str(root / "out"),
                 ),

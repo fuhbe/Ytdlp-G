@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+import yt_dlp
 
 from ytdlp_g import lite, turbo
 from ytdlp_g.media import executable, working_encoders
@@ -63,18 +64,18 @@ def test_network_congestion_reduces_auto_budget():
 
 
 def test_single_extraction_and_reuse(tmp_path, media_url, monkeypatch):
-    original = lite.yt_dlp.YoutubeDL.extract_info
+    original = yt_dlp.YoutubeDL.extract_info
     calls = []
 
     def counted(self, *args, **kwargs):
         calls.append(1)
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(lite.yt_dlp.YoutubeDL, "extract_info", counted)
+    monkeypatch.setattr(yt_dlp.YoutubeDL, "extract_info", counted)
     analysis = lite.inspect_lite(media_url)
     assert lite.inspect_lite(media_url) == analysis
     result = lite.download_lite(
-        dict(analysis=analysis, quality="video:mp4:90", mode="normal", destination=str(tmp_path))
+        dict(analysis=analysis, quality="video:best", mode="normal", destination=str(tmp_path))
     )
     assert Path(result["files"][0]).is_file() and len(calls) == 1
 
@@ -151,7 +152,7 @@ def test_expired_media_url_reextracts_once(http_status, tmp_path, media_url, med
             result = lite.download_lite(
                 dict(
                     analysis=analysis,
-                    quality="video:mp4:90",
+                    quality="video:best",
                     mode="normal",
                     destination=str(tmp_path),
                 )

@@ -1,7 +1,9 @@
 """Worker-local bounded caches and resource budgets for Turbo Engine."""
 
 import copy
+import os
 import shutil
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -35,6 +37,49 @@ generation = 0
 last_clean = 0.0
 
 
+def available_memory():
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class Memory(ctypes.Structure):
+                _fields_ = [
+                    ("length", ctypes.c_uint32),
+                    ("load", ctypes.c_uint32),
+                    ("total", ctypes.c_uint64),
+                    ("available", ctypes.c_uint64),
+                    ("other", ctypes.c_uint64 * 5),
+                ]
+
+            state = Memory()
+            state.length = ctypes.sizeof(state)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(state)):
+                return state.available
+        elif "SC_AVPHYS_PAGES" in os.sysconf_names:
+            return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def cache_size(value):
+    # Bound native Python metadata, including nested extractor dictionaries.
+    seen = set()
+
+    def size(obj):
+        if id(obj) in seen:
+            return 0
+        seen.add(id(obj))
+        count = sys.getsizeof(obj)
+        if isinstance(obj, dict):
+            count += sum(size(k) + size(v) for k, v in obj.items())
+        elif isinstance(obj, (list, tuple)):
+            count += sum(size(v) for v in obj)
+        return count
+
+    return size(value)
+
+
 def configure(values):
     global conversion_slots, download_slots
     previous = prefs.copy()
@@ -45,6 +90,14 @@ def configure(values):
                 1, min(int(value), {"downloads": 8, "conversions": 4, "fragments": 16}[key])
             )
         prefs[key] = value
+    if prefs["profile"] == "auto":
+        free = available_memory()
+        cpu = os.cpu_count() or 2
+        prefs["downloads"] = min(prefs["downloads"], max(1, cpu // 2))
+        prefs["conversions"] = min(prefs["conversions"], max(1, cpu // 4))
+        if free is not None:
+            prefs["downloads"] = min(prefs["downloads"], max(1, free // (768 * 1024**2)))
+            prefs["conversions"] = min(prefs["conversions"], max(1, free // (2 * 1024**3)))
     if previous != prefs:
         invalidate()
     conversion_slots = threading.BoundedSemaphore(prefs["conversions"])
@@ -90,9 +143,11 @@ def cached(key, load, refresh=False):
         return copy.deepcopy(future.result())
     try:
         value = load()
+        weight = cache_size(value)
         with lock:
-            entries[key] = (time.monotonic() + 300, value)
-            while len(entries) > 64:
+            if weight <= 8 * 1024**2:
+                entries[key] = (time.monotonic() + 300, value, weight)
+            while len(entries) > 64 or sum(record[2] for record in entries.values()) > 32 * 1024**2:
                 entries.popitem(last=False)
         future.set_result(value)
         return copy.deepcopy(value)
@@ -102,6 +157,12 @@ def cached(key, load, refresh=False):
     finally:
         with lock:
             inflight.pop(key, None)
+
+
+def take_seed(url, index):
+    with lock:
+        record = entries.pop((generation, ("seed", url, index)), None)
+    return record[1] if record and time.monotonic() < record[0] else None
 
 
 def native_root():

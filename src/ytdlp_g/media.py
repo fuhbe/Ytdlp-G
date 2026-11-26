@@ -63,6 +63,9 @@ def probe(path, configured=""):
         **hidden_process(),
     )
     if result.returncode:
+        from .diagnostics import diagnostic
+
+        diagnostic("probe", RuntimeError(result.stderr))
         raise ValueError("media_invalid")
     return json.loads(result.stdout)
 
@@ -306,7 +309,57 @@ def working_encoders(binary, requested):
     return working + ["libx264"]
 
 
-def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe="", progress=lambda event: None):
+def mp4_video(codec):
+    return (
+        str(codec or "")
+        .lower()
+        .startswith(
+            ("avc", "h264", "av01", "av1", "vp9", "vp09", "hevc", "h265", "hvc1", "hev1", "mpeg4")
+        )
+    )
+
+
+def verify_selection(path, selected, ffprobe=""):
+    from .lite import frame_rate
+
+    info = probe(path, ffprobe)
+    streams = info["streams"]
+    video = next(
+        (
+            s
+            for s in streams
+            if s["codec_type"] == "video" and not s.get("disposition", {}).get("attached_pic")
+        ),
+        {},
+    )
+    if video.get("height") != selected["height"] or not any(
+        s["codec_type"] == "audio" for s in streams
+    ):
+        raise ValueError("selection_mismatch")
+    # Extractors can report nominal rates for variable frame rate streams.
+    # Accept either measured average or the stream time base's nominal rate.
+    expected = selected.get("fps")
+    rates = [frame_rate({field: video.get(field)}) for field in ("avg_frame_rate", "r_frame_rate")]
+    if (
+        expected
+        and any(rates)
+        and all(abs(rate - expected) > max(0.12, expected * 0.015) for rate in rates if rate)
+    ):
+        raise ValueError("selection_mismatch")
+    duration = selected.get("duration")
+    actual = float(info.get("format", {}).get("duration") or 0)
+    if duration and actual and abs(duration - actual) > max(2, duration * 0.02):
+        raise ValueError("selection_mismatch")
+
+
+def ensure_mp4(
+    source,
+    require_audio=True,
+    ffmpeg="",
+    ffprobe="",
+    progress=lambda event: None,
+    preserve_codec=True,
+):
     from . import turbo
 
     """Verify sound and normalize incompatible source codecs to H.264/AAC MP4."""
@@ -324,11 +377,15 @@ def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe="", progress=lambd
     audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
     if not video or (require_audio and not audio):
         raise ValueError("format_unavailable")
-    copy_video = video.get("codec_name") == "h264" and video.get("pix_fmt") in {
-        "yuv420p",
-        "yuvj420p",
-    }
-    copy_audio = not audio or audio.get("codec_name") == "aac"
+    copy_video = mp4_video(video.get("codec_name"))
+    if not preserve_codec:
+        copy_video = video.get("codec_name") == "h264" and video.get("pix_fmt") in {
+            "yuv420p",
+            "yuvj420p",
+        }
+    copy_audio = not audio or audio.get("codec_name") in {"aac", "mp3", "ac3", "eac3", "alac"}
+    if not copy_video and video.get("color_transfer") in {"smpte2084", "arib-std-b67"}:
+        raise ValueError("hdr_unsupported")
     if source.suffix.lower() == ".mp4" and copy_video and copy_audio:
         return source
     with tempfile.TemporaryDirectory(dir=source.parent, prefix=".mp4-") as temporary:
@@ -364,6 +421,8 @@ def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe="", progress=lambd
                         "yuv420p",
                         "-vf",
                         "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                        "-fps_mode",
+                        "passthrough",
                     ]
                 args += ["-c:a", "copy" if copy_audio else "aac"]
                 if not copy_audio:
@@ -384,13 +443,16 @@ def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe="", progress=lambd
                     "-nostats",
                     str(output),
                 ]
-                with subprocess.Popen(
-                    args,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    **hidden_process(),
-                ) as proc:
+                with (
+                    tempfile.TemporaryFile() as errors,
+                    subprocess.Popen(
+                        args,
+                        stdout=subprocess.PIPE,
+                        stderr=errors,
+                        text=True,
+                        **hidden_process(),
+                    ) as proc,
+                ):
                     for line in proc.stdout:
                         if line.startswith("out_time_us=") and duration:
                             try:
@@ -404,6 +466,15 @@ def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe="", progress=lambd
                                     "progress": max(0, min(99, 100 * fraction)),
                                 }
                             )
+                    if proc.wait():
+                        from .diagnostics import diagnostic
+
+                        errors.seek(0)
+                        diagnostic(
+                            "conversion",
+                            RuntimeError(errors.read(4096).decode("utf8", "replace")),
+                            encoder=encoder,
+                        )
                 if not proc.returncode:
                     break
             else:

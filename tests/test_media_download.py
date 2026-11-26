@@ -208,7 +208,7 @@ def test_format_options_and_errors(tmp_path):
     )
     assert format_selector(Options(kind="audio")) == "bestaudio/best"
     assert error_code(RuntimeError("This video is private")) == "private_media"
-    assert error_code(subprocess.TimeoutExpired("ffmpeg", 1)) == "operation_failed"
+    assert error_code(subprocess.TimeoutExpired("ffmpeg", 1)) == "process_timeout"
 
 
 def test_visual_naming_is_safe_template_not_user_code(tmp_path):

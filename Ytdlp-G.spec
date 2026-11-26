@@ -19,9 +19,9 @@ analysis = Analysis(
     [str(root / 'scripts/entry.py')], pathex=[str(root / 'src')],
     binaries=helpers + yt_binaries + ejs_binaries,
     datas=data + yt_data + ejs_data + copy_metadata('yt-dlp') + copy_metadata('yt-dlp-ejs'),
-    hiddenimports=yt_hidden + ejs_hidden + collect_submodules('ytdlp_g', filter=lambda name: name not in {'ytdlp_g.main_classic', 'ytdlp_g.ui.window'}),
+    hiddenimports=yt_hidden + ejs_hidden + collect_submodules('ytdlp_g'),
     hookspath=[], hooksconfig={}, runtime_hooks=[str(root / 'scripts/runtime_hook.py')],
-    excludes=['ytdlp_g.main_classic', 'ytdlp_g.ui.window', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtQml', 'PySide6.QtQuick', 'tkinter'],
+    excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtQml', 'PySide6.QtQuick', 'tkinter'],
     noarchive=False,
 )
 pyz = PYZ(analysis.pure)

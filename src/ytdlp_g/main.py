@@ -14,6 +14,11 @@ def main():
 
         return worker_main()
 
+    if "--classic" in sys.argv:
+        from .main_classic import main as classic
+
+        return classic()
+
     from PySide6.QtCore import QLockFile, QTimer
     from PySide6.QtWidgets import QApplication, QMessageBox
 

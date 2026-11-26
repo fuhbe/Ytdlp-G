@@ -102,6 +102,12 @@ def run_smoke(package, report):
         assert gui.returncode == 0, ("GUI smoke", gui.returncode)
         evidence["checks"].append("GUI + dependency worker")
 
+        classic = subprocess.run(
+            [str(executable), "--classic", "--smoke-test"], timeout=60, **process_options
+        )
+        assert classic.returncode == 0
+        evidence["checks"].append("classic GUI + dependency worker")
+
         fixture = root / "authorized sample.mp4"
         subprocess.run(
             [
@@ -217,7 +223,7 @@ def run_smoke(package, report):
                                 "lite_download",
                                 dict(
                                     analysis=catalog,
-                                    quality="video:mp4:90",
+                                    quality="video:best",
                                     mode="normal",
                                     destination=str(root / "persistent"),
                                 ),
@@ -233,7 +239,7 @@ def run_smoke(package, report):
             )
             evidence["checks"].append("bundled aria2c")
             lite = worker("lite_inspect", {"url": url})
-            assert {c["key"] for c in lite["choices"]} >= {"video:mp4:90", "audio:mp3:convert"}
+            assert {c["key"] for c in lite["choices"]} >= {"video:best", "audio:mp3:convert"}
             native = worker(
                 "lite_download",
                 {
@@ -250,7 +256,7 @@ def run_smoke(package, report):
                 "lite_download",
                 {
                     "analysis": lite,
-                    "quality": "video:mp4:90",
+                    "quality": "video:best",
                     "mode": "zip",
                     "destination": str(root / "lite zip"),
                 },
@@ -279,7 +285,7 @@ def run_smoke(package, report):
             playlist_zip = worker(
                 "lite_download",
                 {
-                    "analysis": playlist,
+                    "url": f"http://127.0.0.1:{server.server_port}/playlist.html",
                     "quality": "audio:mp3:convert",
                     "mode": "zip",
                     "destination": str(root / "playlist zip"),

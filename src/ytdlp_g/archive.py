@@ -42,7 +42,11 @@ def create_zip(
         ) as archive:
             for source in sources:
                 relative = source.relative_to(common) if subfolders else Path(source.name)
-                parts = [safe_name(part) for part in relative.parts]
+                parts = [safe_name(part) for part in relative.parts[:-1]] + [
+                    safe_name(relative.stem, 90) + "." + safe_name(relative.suffix[1:], 12)
+                    if relative.suffix
+                    else safe_name(relative.name)
+                ]
                 name = "/".join(parts)
                 counter = 0
                 while name.casefold() in used:

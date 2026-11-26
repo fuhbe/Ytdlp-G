@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yt_dlp
 from test_ui import wait_until
 
 from ytdlp_g import lite
@@ -47,17 +48,17 @@ def formats(height=720, bitrate=128):
 
 def test_catalog_only_mp4_with_sound_and_mp3():
     catalog = lite.quality_catalog(formats())
-    assert set(catalog) == {"video:mp4:720", "audio:mp3:convert"}
-    assert catalog["video:mp4:720"]["video_stream"] == "v"
-    assert catalog["video:mp4:720"]["audio_stream"] == "a"
+    assert set(catalog) == {"video:mp4:720:?:?", "audio:mp3:convert"}
+    assert catalog["video:mp4:720:?:?"]["video_stream"] == "v"
+    assert catalog["video:mp4:720:?:?"]["audio_stream"] == "a"
     assert all(c["container"] != "mp3" for c in catalog.values() if not c.get("conversion"))
 
 
-def test_playlist_intersection_does_not_offer_unavailable_resolution():
+def test_playlist_offers_individual_best_and_maximum_resolutions():
     choices = lite.common_choices(
         [lite.quality_catalog(formats()), lite.quality_catalog(formats(480, 96))]
     )
-    assert len(choices) == 1 and choices[0]["key"] == "audio:mp3:convert"
+    assert [c["key"] for c in choices] == [lite.BEST, "video:max:720", "video:max:480", lite.MP3]
     assert "audio_stream" not in choices[0]
 
 
@@ -86,17 +87,22 @@ def test_playlist_checks_every_item_and_counts_private_entries(monkeypatch):
                 else {first["url"]: first, second["url"]: second}[url]
             )
 
-    monkeypatch.setattr(lite.yt_dlp, "YoutubeDL", YDL)
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", YDL)
     result = lite.inspect_lite("https://example.org/list")
-    assert len(extracted) == 3
-    assert [item["index"] for item in result["items"]] == [1, 3]
+    assert len(extracted) == 1
+    assert [item["index"] for item in result["items"]] == [1, 2, 3]
     assert result["skipped"] == 1
-    assert [c["key"] for c in result["choices"]] == ["audio:mp3:convert"]
+    assert [c["key"] for c in result["choices"]] == [
+        lite.BEST,
+        "video:max:720",
+        "video:max:480",
+        lite.MP3,
+    ]
 
 
 def test_quality_disappearing_is_reported_without_fallback(monkeypatch, tmp_path):
     analysis = {
-        "choices": [{"key": "video:mp4:720"}],
+        "choices": [{"key": "video:mp4:720:?:?"}],
         "items": [{"url": "https://example.org/one", "title": "one", "index": 1}],
         "title": "one",
         "playlist": False,
@@ -115,25 +121,22 @@ def test_quality_disappearing_is_reported_without_fallback(monkeypatch, tmp_path
         def extract_info(self, *args, **kwargs):
             return formats(480)
 
-    monkeypatch.setattr(lite.yt_dlp, "YoutubeDL", YDL)
-    with pytest.raises(ValueError, match="^format_unavailable$"):
-        lite.download_lite(
-            {
-                "analysis": analysis,
-                "quality": "video:mp4:720",
-                "mode": "normal",
-                "destination": str(tmp_path),
-            }
-        )
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", YDL)
+    result = lite.download_lite(
+        {
+            "analysis": analysis,
+            "quality": "video:mp4:720:?:?",
+            "mode": "normal",
+            "destination": str(tmp_path),
+        }
+    )
+    assert result["failed"] == 1 and result["failures"][0]["code"] == "format_unavailable"
     assert list(tmp_path.iterdir()) == []
 
 
 def test_real_link_mp3_audio_and_mp4_zip_only(media_url, tmp_path):
     analysis = lite.inspect_lite(media_url)
-    assert {c["key"] for c in analysis["choices"]} == {
-        "video:mp4:90",
-        "audio:mp3:convert",
-    }
+    assert {c["key"] for c in analysis["choices"]} == {lite.BEST, lite.MP3, "video:mp4:90:15.0:SDR"}
     audio = lite.download_lite(
         {
             "analysis": analysis,
@@ -147,7 +150,7 @@ def test_real_link_mp3_audio_and_mp4_zip_only(media_url, tmp_path):
     zipped = lite.download_lite(
         {
             "analysis": analysis,
-            "quality": "video:mp4:90",
+            "quality": lite.BEST,
             "mode": "zip",
             "destination": str(tmp_path / "zip"),
         }
@@ -165,15 +168,15 @@ def test_zip_failure_preserves_downloaded_sources(media_url, tmp_path, monkeypat
         raise ValueError("zip_integrity")
 
     monkeypatch.setattr(lite, "create_zip", failed_zip)
-    with pytest.raises(ValueError, match="zip_integrity"):
-        lite.download_lite(
-            {
-                "analysis": analysis,
-                "quality": "video:mp4:90",
-                "mode": "zip",
-                "destination": str(tmp_path),
-            }
-        )
+    result = lite.download_lite(
+        {
+            "analysis": analysis,
+            "quality": lite.BEST,
+            "mode": "zip",
+            "destination": str(tmp_path),
+        }
+    )
+    assert result["archive_error"]["code"] == "zip_integrity"
     assert list(tmp_path.rglob("*.mp4"))
 
 
@@ -184,11 +187,11 @@ def test_compact_gui_real_download_and_live_language(qapp, tmp_path, media_url):
     window.smoke_mode = True
     window.show()
     window.url.setText(media_url)
-    assert window.output.count() == 2 and not window.download_button.isEnabled()
+    assert window.output.count() == 2 and window.download_button.isEnabled()
     window.analyze()
     wait_until(qapp, lambda: not window.tasks)
     assert window.analysis is not None, window.status.text()
-    assert window.quality.count() == 1 and "90p" in window.quality.currentText()
+    assert window.quality.count() == 2 and window.quality.currentData() == lite.BEST
     window.kind.setCurrentIndex(window.kind.findData("audio"))
     assert "MP3" in window.quality.currentText()
     for language in ("es", "en", "pt-BR"):
@@ -210,15 +213,15 @@ def test_compact_gui_real_download_and_live_language(qapp, tmp_path, media_url):
     wait_until(qapp, lambda: not window.tasks)
     assert Path(window.last_result["files"][0]).suffix == ".mp3"
     window.url.setText("https://example.org/new")
-    assert window.analysis is None and not window.download_button.isEnabled()
+    assert window.analysis is None and window.download_button.isEnabled()
     window.close()
 
 
 @pytest.mark.parametrize(
     "mode,quality,suffix",
     [
-        ("normal", "video:mp4:90", ".mp4"),
-        ("zip", "video:mp4:90", ".mp4"),
+        ("normal", lite.BEST, ".mp4"),
+        ("zip", lite.BEST, ".mp4"),
         ("normal", "audio:mp3:convert", ".mp3"),
         ("zip", "audio:mp3:convert", ".mp3"),
     ],
@@ -258,7 +261,7 @@ def test_mp3_is_common_across_different_native_codecs():
     aac, opus = formats(), formats(480)
     opus["formats"][1].update(acodec="opus", ext="webm")
     choices = lite.common_choices([lite.quality_catalog(aac), lite.quality_catalog(opus)])
-    assert [c["key"] for c in choices] == ["audio:mp3:convert"]
+    assert lite.MP3 in {c["key"] for c in choices}
 
 
 def test_real_mp3_conversion_has_320kbps_audio_only(media_url, tmp_path):
@@ -365,8 +368,9 @@ def test_webm_and_mixed_codec_playlists_offer_mp4_at_real_resolutions():
     webm["formats"][1].update(ext="webm", acodec="opus")
     catalogs = [lite.quality_catalog(formats()), lite.quality_catalog(webm)]
     assert {c["key"] for c in lite.common_choices(catalogs)} == {
-        "video:mp4:720",
-        "audio:mp3:convert",
+        lite.BEST,
+        "video:max:720",
+        lite.MP3,
     }
 
 
@@ -390,11 +394,11 @@ def test_real_separate_webm_video_and_audio_become_mp4(media_file, media_url, tm
       </Period>
     </MPD>""")
     analysis = lite.inspect_lite(base + "/adaptive.mpd")
-    assert "video:mp4:90" in {c["key"] for c in analysis["choices"]}
+    assert any(c.get("height") == 90 for c in analysis["choices"])
     result = lite.download_lite(
         {
             "analysis": analysis,
-            "quality": "video:mp4:90",
+            "quality": lite.BEST,
             "mode": "normal",
             "destination": str(tmp_path),
         }
@@ -403,5 +407,5 @@ def test_real_separate_webm_video_and_audio_become_mp4(media_file, media_url, tm
     streams = probe(result["files"][0])["streams"]
     assert {s["codec_type"] for s in streams} == {"video", "audio"}
     video = next(s for s in streams if s["codec_type"] == "video")
-    assert video["height"] == 90 and video["codec_name"] == "h264"
+    assert video["height"] == 90 and video["codec_name"] == "vp9"
     assert next(s for s in streams if s["codec_type"] == "audio")["codec_name"] == "aac"

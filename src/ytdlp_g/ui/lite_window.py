@@ -1,5 +1,6 @@
 """Compact Aero-inspired UI: link, native quality, destination and two outputs."""
 
+import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..i18n import Translator
-from ..paths import validate_url
+from ..paths import data_dir, validate_url
 from ..tasks import MediaSession, Task
 
 
@@ -72,6 +73,8 @@ class LiteWindow(QWidget):
         self.analysis = None
         self.analysis_url = ""
         self.last_result = None
+        self.last_request = None
+        self.detail_text = ""
         self.smoke_mode = False
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle(f"Ytdlp-G {__version__}")
@@ -111,7 +114,7 @@ class LiteWindow(QWidget):
         self.tr.bind(self.url.setPlaceholderText, "lite_url_hint")
         self.tr.bind(self.url.setAccessibleName, "url")
         self.url.textChanged.connect(self.invalidate)
-        self.url.returnPressed.connect(self.analyze)
+        self.url.returnPressed.connect(self.start_download)
         link_row.addWidget(self.url, 1)
         self.paste = self.button(
             "paste", lambda: self.url.setText(QApplication.clipboard().text().strip())
@@ -127,7 +130,7 @@ class LiteWindow(QWidget):
         layout.addWidget(self.summary)
         mode_row = QHBoxLayout()
         self.kind = QComboBox()
-        for code, key in (("video", "video"), ("audio", "audio")):
+        for code, key in (("video", "lite_video_mp4"), ("audio", "lite_audio_mp3")):
             index = self.kind.count()
             self.kind.addItem(self.tr(key), code)
             self.tr.bind(lambda text, i=index: self.kind.setItemText(i, text), key)
@@ -180,10 +183,17 @@ class LiteWindow(QWidget):
         self.download_button.setObjectName("downloadButton")
         self.download_button.setEnabled(False)
         actions.addWidget(self.open_button)
+        self.details_button = self.button("lite_details", self.show_details)
+        self.details_button.hide()
+        actions.addWidget(self.details_button)
+        self.retry_button = self.button("retry", self.retry)
+        self.retry_button.hide()
+        actions.addWidget(self.retry_button)
         actions.addStretch()
         actions.addWidget(self.cancel_button)
         actions.addWidget(self.download_button)
         layout.addLayout(actions)
+        self.refresh_choices()
         self.tr.changed.connect(self.retranslate)
         self.setStyleSheet("""
             QWidget {font-family:'Segoe UI','DejaVu Sans';font-size:12px;color:#18354c;}
@@ -276,6 +286,7 @@ class LiteWindow(QWidget):
 
     def set_busy(self, busy):
         for control in (
+            self.retry_button,
             self.url,
             self.paste,
             self.analyze_button,
@@ -295,7 +306,7 @@ class LiteWindow(QWidget):
 
     def update_download_enabled(self):
         self.download_button.setEnabled(
-            not self.tasks and self.analysis is not None and bool(self.quality.currentData())
+            not self.tasks and bool(self.url.text().strip()) and bool(self.quality.currentData())
         )
 
     def invalidate(self):
@@ -303,8 +314,10 @@ class LiteWindow(QWidget):
             self.cancel()
         self.analysis = None
         self.analysis_url = ""
-        self.quality.clear()
-        self.quality.setEnabled(False)
+        self.last_result = None
+        self.details_button.hide()
+        self.retry_button.hide()
+        self.refresh_choices()
         self.summary.setText(self.tr("lite_instruction"))
         self.update_download_enabled()
 
@@ -351,6 +364,15 @@ class LiteWindow(QWidget):
             lambda: (d.reject(), self.run_task("clear_cache", {}, lambda _: self.invalidate())),
         )
         form.addRow(clear)
+
+        def reset():
+            self.settings.values["performance"] = {}
+            self.settings.save()
+            self.rotate_session = True
+            d.reject()
+
+        form.addRow(self.button("lite_reset", reset))
+        form.addRow(self.button("lite_logs", self.open_logs))
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -432,68 +454,121 @@ class LiteWindow(QWidget):
     def refresh_choices(self):
         selected = self.quality.currentData()
         self.quality.clear()
-        if self.analysis:
-            for choice in self.analysis["choices"]:
-                if choice["kind"] != self.kind.currentData():
-                    continue
-                if choice.get("conversion"):
-                    text = self.tr("lite_mp3_quality")
-                elif choice["kind"] == "video":
-                    text = f"{choice['height']}p · {choice['container'].upper()}"
-                    if choice.get("fps"):
-                        text += f" · {choice['fps']:g} fps"
-                    if choice.get("hdr"):
-                        text += " · " + self.tr("perf_hdr")
-                else:
-                    low, high = choice["bitrate_min"], choice["bitrate_max"]
-                    bitrate = (
-                        (str(high) if low == high else f"{low}–{high}") + " kbps"
-                        if low and high
-                        else self.tr("lite_original")
-                    )
-                    text = f"{bitrate} · {choice['container'].upper()} ({choice['codec'].upper()})"
-                self.quality.addItem(text, choice["key"])
-                if choice.get("conversion"):
-                    self.quality.setItemData(
-                        self.quality.count() - 1,
-                        self.tr("lite_mp3_hint"),
-                        Qt.ItemDataRole.ToolTipRole,
-                    )
-            self.quality.setCurrentIndex(max(0, self.quality.findData(selected)))
-            if not self.quality.count():
-                self.status.setText(self.tr("lite_no_kind"))
+        choices = (
+            self.analysis["choices"]
+            if self.analysis
+            else [
+                {"key": "video:best", "kind": "video"},
+                {"key": "audio:mp3:convert", "kind": "audio"},
+            ]
+        )
+        for choice in choices:
+            if choice["kind"] != self.kind.currentData():
+                continue
+            if choice["key"] == "video:best":
+                text = self.tr("lite_best")
+            elif choice["kind"] == "audio":
+                text = self.tr("lite_mp3_quality")
+            elif choice.get("maximum"):
+                text = self.tr("lite_cap", height=choice["height"])
+            else:
+                text = f"{choice['height']}p"
+                if choice.get("fps"):
+                    text += f" · {choice['fps']:.3f}".rstrip("0").rstrip(".") + " fps"
+                if choice.get("dynamic_range"):
+                    text += " · " + choice["dynamic_range"]
+            self.quality.addItem(text, choice["key"])
+        self.quality.setCurrentIndex(max(0, self.quality.findData(selected)))
         self.quality.setEnabled(not self.tasks and self.quality.count() > 0)
         self.update_download_enabled()
 
     def start_download(self):
-        if self.tasks or not self.analysis or not self.quality.currentData():
+        if self.tasks or not self.quality.currentData():
+            return
+        try:
+            url = validate_url(self.url.text())
+        except ValueError:
+            self.message("invalid_url")
             return
         if not self.destination.text().strip():
             self.message("invalid_files")
             return
-        self.progress.setRange(0, 0)
         self.save_preferences()
-
-        def result(data):
-            self.last_result = data
-            self.progress.setRange(0, 100)
-            self.progress.setValue(100)
-            self.status.setText(
-                self.tr(
-                    "lite_done", count=data["completed"], failed=data["failed"] + data["skipped"]
-                )
-            )
-
-        self.run_task(
-            "lite_download",
-            {
-                "analysis": self.analysis,
-                "quality": self.quality.currentData(),
-                "mode": self.output.currentData(),
-                "destination": self.destination.text().strip(),
-            },
-            result,
+        self.last_request = dict(
+            url=url,
+            analysis=self.analysis,
+            quality=self.quality.currentData(),
+            mode=self.output.currentData(),
+            destination=self.destination.text().strip(),
         )
+        self.begin_download("lite_download")
+
+    def retry(self):
+        if self.last_request and not self.tasks:
+            action = (
+                "lite_zip_retry"
+                if (self.last_result or {}).get("archive_error")
+                else "lite_download"
+            )
+            self.begin_download(action)
+
+    def begin_download(self, action):
+        self.progress.setRange(0, 0)
+        self.status.setText(self.tr("lite_analyzing" if action == "lite_download" else "archiving"))
+        self.retry_button.hide()
+        self.details_button.hide()
+        self.run_task(action, self.last_request, self.download_result)
+
+    def download_result(self, data):
+        self.last_result = data
+        self.progress.setRange(0, 100)
+        self.progress.setValue(100 if data["status"] == "complete" else 0)
+        self.status.setText(
+            self.tr("lite_" + data["status"]) + " · " + self.tr("lite_counts", **data)
+        )
+        details = [f"#{f['index']} · {self.tr(f['code'])}" for f in data["failures"]]
+        if data.get("archive_error"):
+            details.append(self.tr(data["archive_error"]["code"]))
+            details.extend(data["files"])
+        details.extend(f"#{f['index']} · {f['height']}p" for f in data.get("lower", []))
+        self.detail_text = "\n".join(details)
+        self.diagnostic_text = json.dumps(
+            {k: data[k] for k in ("status", "failures", "archive_error", "lower") if k in data},
+            ensure_ascii=False,
+            indent=2,
+        )
+        self.details_button.setVisible(bool(details))
+        self.retry_button.setVisible(data["status"] != "complete")
+
+    def open_logs(self):
+        directory = data_dir() / "logs"
+        directory.mkdir(exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+
+    def show_details(self):
+        box = QMessageBox(self)
+        box.setWindowTitle(self.tr("lite_details"))
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(self.status.text())
+        box.setDetailedText(self.detail_text + "\n" + self.diagnostic_text)
+        copy = box.addButton(self.tr("lite_copy"), QMessageBox.ButtonRole.ActionRole)
+        export = box.addButton(self.tr("lite_export"), QMessageBox.ButtonRole.ActionRole)
+        logs = box.addButton(self.tr("lite_logs"), QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is copy:
+            QApplication.clipboard().setText(self.diagnostic_text)
+        elif box.clickedButton() is logs:
+            self.open_logs()
+        elif box.clickedButton() is export:
+            name, _ = QFileDialog.getSaveFileName(
+                self, self.tr("lite_export"), "Ytdlp-G.json", "JSON (*.json)"
+            )
+            if name:
+                try:
+                    Path(name).write_text(self.diagnostic_text, encoding="utf8")
+                except OSError:
+                    self.message("publish_failed")
 
     def on_progress(self, data):
         phase = data.get("phase") or data.get("status", "running")
@@ -515,10 +590,10 @@ class LiteWindow(QWidget):
             detail += f" · {data['speed'] / 1048576:.1f} MiB/s"
         if data.get("eta"):
             detail += f" · {data['eta']:.0f} s"
-        if data.get("encoder"):
-            detail += f" · {data['encoder']}"
+        if data.get("aggregate"):
+            detail += " · " + self.tr("lite_counts", **data)
         self.status.setText(self.tr(key) + detail)
-        if (
+        if not data.get("aggregate") and (
             phase in {"engine_updating", "analyzing", "checking"}
             or phase == "processing"
             and not data.get("progress")
@@ -534,7 +609,14 @@ class LiteWindow(QWidget):
         self.progress.setRange(0, 100)
         self.status.setText(self.tr(data["code"]))
         if data["code"] != "cancelled" and not self.smoke_mode:
-            self.message(data["code"])
+            self.detail_text = self.tr(data["code"])
+            self.diagnostic_text = json.dumps(data, ensure_ascii=False, indent=2)
+            self.details_button.show()
+            if self.current_task and self.current_task.action in {
+                "lite_download",
+                "lite_zip_retry",
+            }:
+                self.retry_button.show()
 
     def cancel(self):
         if self.current_task:

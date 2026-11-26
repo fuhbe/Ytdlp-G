@@ -1,7 +1,7 @@
 """yt-dlp API adapter. Network work is called only inside an isolated worker."""
 
+import errno
 import json
-import shutil
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -10,16 +10,23 @@ import yt_dlp  # noqa: F401 (public adapter reference)
 
 from . import turbo
 from .archive import create_zip
-from .media import ensure_mp4, executable
+from .media import ensure_mp4, executable, hidden_process, mp4_video, verify_selection
 from .models import Options
-from .paths import publish, safe_name, validate_url
+from .paths import cleanup_stage, publish, safe_name, validate_url
 
 
 class QuietLogger:
     def debug(self, message):
         pass
 
-    info = warning = error = debug
+    info = debug
+
+    def warning(self, message):
+        from .diagnostics import diagnostic
+
+        diagnostic("extraction", RuntimeError(message))
+
+    error = warning
 
 
 @lru_cache(maxsize=1)
@@ -37,7 +44,7 @@ def base_options():
     return {
         "js_runtimes": runtime_paths().copy(),
         "quiet": True,
-        "no_warnings": True,
+        "no_warnings": False,
         "logger": QuietLogger(),
         "socket_timeout": 15,
         "windowsfilenames": True,
@@ -272,6 +279,48 @@ def organization_folder(info, options):
     return Path(safe_name(value))
 
 
+def recover_merge(stage, options):
+    """Both split downloads are complete when FFmpegMerger reports a PP error."""
+    from .diagnostics import diagnostic
+
+    inputs = []
+    for identifier in (options.video_stream, options.audio_stream):
+        matches = [
+            p
+            for p in stage.iterdir()
+            if p.stem == "media.f" + identifier
+            and p.suffix.lower() not in {".part", ".ytdl", ".aria2"}
+        ]
+        if len(matches) != 1:
+            raise ValueError("merge_failed")
+        inputs.extend(["-i", str(matches[0])])
+    output = stage / "recovered.mkv"
+    with turbo.conversion_slots:
+        proc = subprocess.run(
+            [
+                executable("ffmpeg", options.ffmpeg),
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                *inputs,
+                "-map",
+                "0:V:0",
+                "-map",
+                "1:a:0",
+                "-c",
+                "copy",
+                str(output),
+            ],
+            capture_output=True,
+            **hidden_process(),
+        )
+    if proc.returncode:
+        diagnostic("merge", RuntimeError(proc.stderr.decode("utf8", "replace")))
+        raise ValueError("merge_failed")
+    return output
+
+
 def download(
     payload,
     emit=lambda event: None,
@@ -318,24 +367,16 @@ def download(
         streams = {f["format_id"]: f for f in info_cache.get("formats", [])}
         video = streams.get(options.video_stream, {})
         audio = streams.get(options.audio_stream, {})
-        args = []
-        if not str(video.get("vcodec", "")).startswith(("h264", "avc")):
-            from .media import ENCODER_ARGS, working_encoders
-
-            encoder = working_encoders(executable("ffmpeg"), turbo.prefs["encoder"])[0]
-            args += [
-                "-c:v",
-                encoder,
-                *ENCODER_ARGS[encoder],
-                "-pix_fmt",
-                "yuv420p",
-                "-vf",
-                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-            ]
-        if not str(audio.get("acodec", "")).startswith(("aac", "mp4a")):
-            args += ["-c:a", "aac", "-b:a", "320k"]
-        extraction["postprocessor_args"] = {"merger+ffmpeg_o": args}
-        direct_mp4 = True
+        # FFmpegMerger defaults to stream copy. Unsupported video is merged
+        # losslessly in MKV before the capability-tested, locally retryable encode.
+        direct_mp4 = mp4_video(video.get("vcodec"))
+        if direct_mp4 and not str(audio.get("acodec", "")).startswith(
+            ("aac", "mp4a", "mp3", "ac3", "eac3", "alac")
+        ):
+            extraction["postprocessor_args"] = {"merger+ffmpeg_o": ["-c:a", "aac", "-b:a", "320k"]}
+    if payload.get("lite"):
+        extraction["outtmpl"] = "media.%(ext)s"
+        extraction["skip_unavailable_fragments"] = False
     if direct_mp4:
         extraction["merge_output_format"] = "mp4"
     if aria:
@@ -349,11 +390,20 @@ def download(
         }
     if payload.get("source_index"):
         extraction["playlist_items"] = str(int(payload["source_index"]))
+    recovered = None
     with turbo.youtube_dl(extraction) as ydl:
-        if info_cache is None:
+        if info_cache is None or recovery:
             info = ydl.extract_info(validate_url(payload["url"]), download=True)
         else:
-            info = ydl.process_ie_result(info_cache, download=True)
+            try:
+                info = ydl.process_ie_result(info_cache, download=True)
+            except yt_dlp.utils.DownloadError as exc:
+                if not payload.get("lite") or not direct_mp4 or error_code(exc) != "merge_failed":
+                    raise
+                recovered = recover_merge(stage, options)
+                info = info_cache
+        if info and "entries" in info:
+            info = next((entry for entry in info["entries"] if entry), None)
         if not info:
             raise ValueError("unavailable")
     if options.kind in {"video", "video_only"} and options.container == "mp4":
@@ -363,15 +413,20 @@ def download(
             if p.suffix.lower()
             in {".mp4", ".mkv", ".webm", ".mov", ".flv", ".avi", ".ts", ".m4v", ".ogv"}
         ]
+        if recovered:
+            candidates = [recovered]
         if len(candidates) != 1:
             raise ValueError("no_output")
-        ensure_mp4(
+        output = ensure_mp4(
             candidates[0],
             progress=emit,
             require_audio=options.kind == "video",
+            preserve_codec=bool(payload.get("lite")),
             ffmpeg=options.ffmpeg,
             ffprobe=options.ffprobe,
         )
+        if payload.get("selected"):
+            verify_selection(output, payload["selected"], options.ffprobe)
     if options.info_json:
         # Do not export signed media URLs or request headers from yt-dlp's raw info.
         clean = summarize(info)
@@ -387,6 +442,8 @@ def download(
         for p in stage.iterdir()
         if p.is_file() and not p.name.endswith((".part", ".ytdl", ".temp", ".aria2"))
     )
+    if payload.get("lite") and options.kind == "video":
+        files = [output]
     if not files:
         raise ValueError("no_output")
     folder = destination / organization_folder(info, options)
@@ -395,10 +452,15 @@ def download(
     # Source staging remains intact on errors. Publication never replaces a file.
     if options.output_mode in {"normal", "both"}:
         for source in files:
-            target = folder / (prefix + safe_name(source.stem, 110) + source.suffix)
-            published.append(
-                str(turbo.disk_pool.submit(publish, source, target, immutable=True).result())
-            )
+            stem = (info.get("title") or source.stem) if payload.get("lite") else source.stem
+            target = folder / (prefix + safe_name(stem, 86) + source.suffix)
+            try:
+                published.append(
+                    str(turbo.disk_pool.submit(publish, source, target, immutable=True).result())
+                )
+            except OSError as exc:
+                exc.stage = "publish"
+                raise
     if options.output_mode in {"zip", "both"}:
         emit({"status": "archiving", "progress": 0})
         result = turbo.zip_pool.submit(
@@ -409,16 +471,26 @@ def download(
             progress=emit,
         ).result()
         published.append(str(result))
-    shutil.rmtree(stage)
+    cleanup_stage(stage)
     # Sensitive URL query values are never put in progress or diagnostics.
     return {"files": published, "title": info.get("title", ""), "progress": 100}
 
 
 def error_code(error):
+    if isinstance(error, yt_dlp.utils.DownloadCancelled):
+        return "cancelled"
     if isinstance(error, subprocess.TimeoutExpired):
-        return "operation_failed"
+        return "process_timeout"
+    if isinstance(error, PermissionError):
+        return "access_denied"
+    if isinstance(error, OSError) and (
+        error.errno == errno.ENOSPC or getattr(error, "winerror", 0) == 112
+    ):
+        return "disk_full"
     text = str(error).lower()
     for marker, code in (
+        ("postprocessing:", "merge_failed"),
+        ("unable to download", "network_error"),
         ("private", "private_media"),
         ("sign in", "private_media"),
         ("unsupported url", "unsupported_url"),
@@ -432,6 +504,19 @@ def error_code(error):
             return code
     if isinstance(error, ValueError) and str(error) in {
         "lite_no_common",
+        "hdr_unsupported",
+        "selection_mismatch",
+        "extract_failed",
+        "transfer_failed",
+        "publish_failed",
+        "zip_failed",
+        "merge_failed",
+        "process_timeout",
+        "access_denied",
+        "disk_full",
+        "network_error",
+        "private_media",
+        "unsupported_url",
         "format_unavailable",
         "invalid_options",
         "invalid_url",

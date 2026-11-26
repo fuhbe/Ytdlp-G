@@ -1,16 +1,20 @@
 """Available-only media choices and the two-output simplified download flow."""
 
+import hashlib
 import json
-import shutil
 import subprocess
-import uuid
+import threading
+import time
+from fractions import Fraction
 from pathlib import Path
+from urllib.parse import urlsplit
 
-import yt_dlp
+from yt_dlp.utils import DownloadCancelled
 
 from . import turbo
-from .archive import create_zip
-from .downloader import base_options, download, error_code
+from .archive import Cancelled, create_zip
+from .diagnostics import diagnostic
+from .downloader import base_options, download
 from .media import executable, hidden_process
 from .models import Options
 from .paths import safe_name, validate_url
@@ -34,6 +38,17 @@ def usable_formats(info):
     return result
 
 
+def frame_rate(stream):
+    for field in ("avg_frame_rate", "r_frame_rate"):
+        try:
+            rate = Fraction(str(stream.get(field)))
+            if 0 < rate <= 1000:
+                return float(rate)
+        except (ValueError, ZeroDivisionError):
+            continue
+    return None
+
+
 def enrich_metadata(info):
     """Probe direct media when the extractor cannot report codec/resolution.
 
@@ -46,14 +61,25 @@ def enrich_metadata(info):
         if (
             fmt.get("vcodec") is not None
             and fmt.get("acodec") is not None
-            and (fmt.get("vcodec") == "none" or fmt.get("height"))
+            and (
+                fmt.get("vcodec") == "none"
+                or fmt.get("height")
+                and (fmt.get("fps") or fmt.get("manifest_url"))
+            )
         ):
             return
         source = fmt.get("url")
         if not source or fmt.get("has_drm"):
             return
         try:
-            source = validate_url(source)
+            parts = urlsplit(source)
+            if (
+                parts.scheme not in {"http", "https"}
+                or not parts.hostname
+                or parts.username
+                or parts.password
+            ):
+                return
             headers = fmt.get("http_headers") or info.get("http_headers") or {}
             header_text = "".join(
                 f"{key}: {value}\r\n"
@@ -80,6 +106,7 @@ def enrich_metadata(info):
                     **hidden_process(),
                 )
             if result.returncode:
+                diagnostic("probe", RuntimeError(result.stderr))
                 return
             streams = json.loads(result.stdout).get("streams", [])
             video = next(
@@ -97,6 +124,10 @@ def enrich_metadata(info):
                 acodec=audio.get("codec_name", "none"),
                 height=video.get("height"),
                 width=video.get("width"),
+                fps=frame_rate(video) or fmt.get("fps"),
+                dynamic_range={"smpte2084": "HDR10", "arib-std-b67": "HLG"}.get(
+                    video.get("color_transfer"), fmt.get("dynamic_range")
+                ),
                 abr=float(audio.get("bit_rate") or 0) / 1000,
                 asr=audio.get("sample_rate"),
             )
@@ -121,8 +152,8 @@ def quality_catalog(info):
     # yt-dlp sorts formats from worst to best, accounting for codec, channels,
     # bitrate and source preferences. Preserve that ranking for separate sound.
     best_audio = pure_audio[-1] if pure_audio else None
-    choices, scores = {}, {}
-    for video in formats:
+    choices = {}
+    for rank, video in enumerate(formats):
         height = video.get("height")
         if not height or video.get("vcodec") in {None, "none"}:
             continue
@@ -131,32 +162,24 @@ def quality_catalog(info):
         combined = video.get("acodec") not in {None, "none"}
         if not combined and not best_audio:
             continue
-        key = f"video:mp4:{int(height)}"
-        score = (
-            float(video.get("fps") or 0),
-            video.get("dynamic_range") not in {None, "SDR"},
-            int(video.get("bit_depth") or 8),
-            str(video.get("vcodec", "")).startswith(("avc", "h264")),
-            float(video.get("tbr") or 0),
-        )
-        if key not in scores or score > scores[key]:
-            scores[key] = score
-            choices[key] = {
-                "key": key,
-                "kind": "video",
-                "height": int(height),
-                "container": "mp4",
-                "video_stream": str(video["format_id"]),
-                "audio_stream": "" if combined else str(best_audio["format_id"]),
-                "codec": str(video.get("vcodec") or ""),
-                "hdr": video.get("dynamic_range") not in {None, "SDR"}
-                or int(video.get("bit_depth") or 8) > 8,
-                "fps": video.get("fps"),
-                "direct": str(video.get("vcodec", "")).startswith(("avc", "h264"))
-                and str((video if combined else best_audio).get("acodec", "")).startswith(
-                    ("aac", "mp4a")
-                ),
-            }
+        fps = float(video["fps"]) if video.get("fps") else None
+        dynamic = video.get("dynamic_range") or ""
+        hdr = bool(dynamic and dynamic != "SDR")
+        key = f"video:mp4:{int(height)}:{fps or '?'}:{dynamic or '?'}"
+        # Formats arrive in yt-dlp's source preference order, worst first.
+        choices[key] = {
+            "key": key,
+            "kind": "video",
+            "height": int(height),
+            "container": "mp4",
+            "video_stream": str(video["format_id"]),
+            "audio_stream": "" if combined else str(best_audio["format_id"]),
+            "codec": str(video.get("vcodec") or ""),
+            "hdr": hdr,
+            "dynamic_range": dynamic,
+            "fps": fps,
+            "rank": rank,
+        }
     if any(fmt.get("acodec") not in {None, "none"} for fmt in formats):
         choices["audio:mp3:convert"] = {
             "key": "audio:mp3:convert",
@@ -166,38 +189,70 @@ def quality_catalog(info):
             "conversion": True,
             "bitrate_min": 320,
             "bitrate_max": 320,
-            "audio_stream": "",
+            "audio_stream": next(
+                (
+                    str(f["format_id"])
+                    for f in reversed(pure_audio)
+                    if f.get("acodec") == "mp3" or f.get("ext") == "mp3"
+                ),
+                str(best_audio["format_id"]) if best_audio else "",
+            ),
             "video_stream": "",
         }
     return choices
 
 
-def common_choices(catalogs):
-    if not catalogs:
-        return []
-    keys = set(catalogs[0])
-    for catalog in catalogs[1:]:
-        keys.intersection_update(catalog)
-    result = []
-    for key in keys:
-        choice = dict(catalogs[0][key])
-        choice.pop("video_stream", None)
-        choice.pop("audio_stream", None)
-        if choice["kind"] == "audio":
-            choice["bitrate_min"] = min(c[key]["bitrate_min"] for c in catalogs)
-            choice["bitrate_max"] = max(c[key]["bitrate_max"] for c in catalogs)
-        result.append(choice)
-    return sorted(
-        result,
-        key=lambda c: (
-            c["kind"] != "video",
-            bool(c.get("conversion")),
-            -c.get("height", 0),
-            {"mp4": 0, "webm": 1, "mkv": 2}.get(c["container"], 3),
-            -c.get("bitrate_max", 0),
-            c["key"],
-        ),
+BEST = "video:best"
+MP3 = "audio:mp3:convert"
+
+
+def quality_order(choice):
+    return (choice["height"], choice.get("fps") or 0, choice.get("hdr", False), choice["rank"])
+
+
+def select_format(catalog, key):
+    if key in catalog:
+        return catalog[key]
+    if key == BEST:
+        limit = float("inf")
+    elif key.startswith("video:max:"):
+        limit = int(key.rsplit(":", 1)[1])
+    else:
+        raise ValueError("format_unavailable")
+    candidates = [c for c in catalog.values() if c["kind"] == "video" and c["height"] <= limit]
+    if not candidates:
+        raise ValueError("format_unavailable")
+    return max(candidates, key=quality_order)
+
+
+def common_choices(catalogs, playlist=None):
+    playlist = len(catalogs) > 1 if playlist is None else playlist
+    combined = {k: c for catalog in catalogs for k, c in catalog.items()}
+    video = sorted(
+        (c for c in combined.values() if c["kind"] == "video"), key=quality_order, reverse=True
     )
+    result = [{"key": BEST, "kind": "video", "container": "mp4"}] if video else []
+    if playlist:
+        result.extend(
+            {
+                "key": f"video:max:{h}",
+                "kind": "video",
+                "height": h,
+                "container": "mp4",
+                "maximum": True,
+            }
+            for h in sorted({c["height"] for c in video}, reverse=True)
+        )
+    else:
+        result.extend(
+            {k: v for k, v in c.items() if k not in {"audio_stream", "video_stream", "rank"}}
+            for c in video
+        )
+    if MP3 in combined:
+        result.append(
+            {k: v for k, v in combined[MP3].items() if k not in {"audio_stream", "video_stream"}}
+        )
+    return result
 
 
 def inspect_lite(url, emit=lambda data: None):
@@ -207,8 +262,9 @@ def inspect_lite(url, emit=lambda data: None):
 
 def full_info(url, index=None, entry=None, refresh=False):
     def load():
-        if entry is not None:
-            return enrich_metadata(entry)
+        seed = entry if entry is not None else turbo.take_seed(url, index) if not refresh else None
+        if seed is not None:
+            return enrich_metadata(seed)
         options = extraction_options() | {"noplaylist": True, "skip_download": True}
         if index:
             options["playlist_items"] = str(index)
@@ -223,94 +279,78 @@ def full_info(url, index=None, entry=None, refresh=False):
     return turbo.cached(("info", url, index), load, refresh)
 
 
-def _inspect(url, emit):
-    catalogs, items = [], []
-    skipped = 0
+def list_items(url, emit):
     options = extraction_options() | {
         "skip_download": True,
         "noplaylist": False,
         "extract_flat": "in_playlist",
         "lazy_playlist": True,
-        "ignoreerrors": True,
+        "ignoreerrors": False,
     }
+    emit({"phase": "analyzing"})
+    items = []
     with turbo.youtube_dl(options) as ydl:
         info = ydl.extract_info(url, download=False)
         if not info:
             raise ValueError("unavailable")
         playlist = "entries" in info
-        title = info.get("title") or "download"
-        count = info.get("playlist_count") or info.get("n_entries") or 0
-        entries = info["entries"] if playlist else [info]
-
-        def analyze(pair):
-            index, entry = pair
-            emit(
-                {
-                    "phase": "analyzing",
-                    "current": index,
-                    "total": count,
-                    "title": (entry or {}).get("title", ""),
-                }
-            )
-            if not entry:
-                return None
-            try:
-                candidate = (
-                    entry.get("webpage_url") or entry.get("url") or (url if not playlist else "")
-                )
+        for index, entry in enumerate(info["entries"] if playlist else [info], 1):
+            entry = entry or {}
+            number = entry.get("playlist_index") or index
+            item = {"index": number, "title": entry.get("title") or f"#{number}"}
+            if entry:
+                candidate = entry.get("webpage_url") or entry.get("url") or url
                 if (
                     not str(candidate).startswith(("https://", "http://"))
                     and entry.get("ie_key") == "Youtube"
                 ):
                     candidate = "https://www.youtube.com/watch?v=" + str(entry.get("id", ""))
-                item_url = validate_url(candidate)
-                # Embedded multi-video pages share a page URL. Keep the exact
-                # page entry index so re-extraction/download selects that item.
-                source_index = (
-                    index if playlist and item_url == url and entry.get("formats") else None
-                )
-                seed = entry if source_index or not playlist and entry.get("formats") else None
-                entry = full_info(item_url, source_index, seed)
-                catalog = quality_catalog(entry)
-                if not catalog:
-                    raise ValueError("format_unavailable")
-                return catalog, {
-                    "url": item_url,
-                    "title": entry.get("title") or title,
-                    "index": index,
-                    "traits": {
-                        k: [c.get("fps") or 0, c.get("hdr", False)]
-                        for k, c in catalog.items()
-                        if c["kind"] == "video"
-                    },
-                    "source_index": source_index,
-                }
-            except (yt_dlp.utils.DownloadError, ValueError):
-                return None
-
-        for result in turbo.ordered_map(
-            analyze, enumerate(entries, 1), min(4, turbo.prefs["downloads"])
-        ):
-            if result:
-                catalog, item = result
-                catalogs.append(catalog)
-                items.append(item)
-            else:
-                skipped += 1
-    if not items:
-        raise ValueError("unavailable")
-    choices = common_choices(catalogs)
-    if not choices:
-        raise ValueError("lite_no_common")
+                try:
+                    item_url = validate_url(candidate) if playlist else url
+                except ValueError:
+                    item_url = url
+                source_index = number if playlist and item_url == url else None
+                item.update(url=item_url, source_index=source_index)
+                if entry.get("formats"):
+                    # Keep raw streams in RAM. Detailed probing is deferred to the item worker.
+                    turbo.cached(
+                        ("seed", item_url, source_index), lambda entry=entry: entry, refresh=True
+                    )
+            items.append(item)
     return {
         "url": url,
-        "title": title,
+        "title": info.get("title") or "download",
         "playlist": playlist,
         "items": items,
-        "choices": choices,
-        "skipped": skipped,
-        "catalog_version": 1,
+        "skipped": sum("url" not in i for i in items),
+        "catalog_version": 2,
     }
+
+
+def _inspect(url, emit):
+    plan = list_items(url, emit)
+
+    def analyze(item):
+        if "url" not in item:
+            return {}
+        emit({"phase": "analyzing", "current": item["index"], "total": len(plan["items"])})
+        try:
+            return quality_catalog(full_info(item["url"], item.get("source_index")))
+        except (Cancelled, DownloadCancelled):
+            raise
+        except Exception as exc:
+            item["inspection_error"] = diagnostic("extraction", exc, item["index"])
+            return {}
+
+    catalogs = list(turbo.ordered_map(analyze, plan["items"], min(4, turbo.prefs["downloads"])))
+    plan["choices"] = common_choices(catalogs, plan["playlist"])
+    if not plan["choices"]:
+        error = next(
+            (i["inspection_error"]["code"] for i in plan["items"] if "inspection_error" in i),
+            "unavailable",
+        )
+        raise ValueError(error)
+    return plan
 
 
 def use_aria(info, selected):
@@ -341,39 +381,144 @@ def use_aria(info, selected):
         return False
 
 
+def identity(*parts):
+    return hashlib.sha256(json.dumps(parts, ensure_ascii=True).encode()).hexdigest()[:20]
+
+
+def saved_item(record, target):
+    try:
+        saved = json.loads(record.read_text("utf-8"))
+        paths = []
+        for name, size, stamp in saved["files"]:
+            path = (target / name).resolve()
+            if not path.is_relative_to(target) or path.is_symlink():
+                return None
+            stat = path.stat()
+            if (stat.st_size, stat.st_mtime_ns) != (size, stamp):
+                return None
+            paths.append(str(path))
+        return (paths, saved.get("lower")) if paths else None
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+
+
+def save_record(record, target, files, lower):
+    records = []
+    for name in files:
+        path = Path(name)
+        stat = path.stat()
+        records.append((str(path.relative_to(target)), stat.st_size, stat.st_mtime_ns))
+    record.parent.mkdir(parents=True, exist_ok=True)
+    tmp = record.with_suffix(".tmp")
+    tmp.write_text(json.dumps(dict(files=records, lower=lower)), "utf8")
+    tmp.replace(record)
+
+
+def finish_zip(files, destination, title, emit):
+    return str(
+        turbo.zip_pool.submit(
+            create_zip,
+            files,
+            destination / (safe_name(title, 70) + ".zip"),
+            compression=0,
+            subfolders=True,
+            progress=lambda e: emit(
+                e | {"phase": "archiving", "progress": 95 + min(4, e["progress"] * 0.04)}
+            ),
+        ).result()
+    )
+
+
+def retry_zip(payload, emit):
+    from .paths import cleanup_stage
+
+    destination = Path(payload["destination"]).resolve()
+    working = destination / ".ytdlp-g" / identity(payload["url"], payload["quality"], "zip")
+    state = json.loads((working / "archive.json").read_text("utf8"))
+    target = (working / "files").resolve()
+    files = [(target / name).resolve() for name in state["files"]]
+    if not all(f.is_relative_to(target) for f in files):
+        raise ValueError("invalid_files")
+    archive = finish_zip(files, destination, state["title"], emit)
+    if not state["result"]["failed"] and not state["result"]["skipped"]:
+        cleanup_stage(working)
+    return state["result"] | {"files": [archive]}
+
+
 def download_lite(payload, emit=lambda data: None):
-    analysis = payload["analysis"]
+    from .paths import cleanup_stage
+
+    analysis = payload.get("analysis") or list_items(validate_url(payload["url"]), emit)
     key = payload["quality"]
-    if key not in {choice["key"] for choice in analysis["choices"]}:
+    if key not in {BEST, MP3} and key not in {
+        choice["key"] for choice in analysis.get("choices", [])
+    }:
         raise ValueError("format_unavailable")
     mode = payload["mode"]
     if mode not in {"normal", "zip"}:
         raise ValueError("invalid_options")
     destination = Path(payload["destination"]).resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    identifier = "lite-" + uuid.uuid4().hex
-    working = destination / ".ytdlp-g" / identifier
+    job = identity(analysis.get("url") or analysis["items"][0].get("url"), key, mode)
+    working = destination / ".ytdlp-g" / job
     target = working / "files" if mode == "zip" else destination
-    files, failures = [], []
-    total = len(analysis["items"])
+    items = analysis["items"]
+    total = len(items)
+    fractions = {}
+    counts = dict(completed=0, failed=0, skipped=0)
+    lock = threading.Lock()
 
-    def one(pair):
-        number, item = pair
+    def report(item, event, outcome=None):
+        i = item["index"]
+        with lock:
+            if outcome:
+                counts[outcome] += 1
+                fractions[i] = 1
+            elif event.get("status") == "running":
+                fractions[i] = max(fractions.get(i, 0), min(0.9, event.get("progress", 0) * 0.009))
+            emit(
+                event
+                | counts
+                | {
+                    "aggregate": True,
+                    "phase": event.get("phase") or event.get("status", "running"),
+                    "progress": sum(fractions.values()) * (95 if mode == "zip" else 99) / total,
+                    "current": i,
+                    "total_items": total,
+                    "remaining": total - sum(counts.values()),
+                }
+            )
+
+    def one(item):
+        i = item["index"]
+        if "url" not in item:
+            report(item, {}, "skipped")
+            return [], None, None
+        stamp = identity(job, i, item["url"], item.get("source_index"), item["title"])
+        record = working / (stamp + ".json")
+        previous = saved_item(record, target)
+        if previous:
+            report(item, {}, "completed")
+            return previous[0], None, previous[1]
+        original = None
         for attempt in range(2):
+            stage = "extraction"
             try:
+                report(item, {"phase": "checking"})
                 fresh = full_info(
                     validate_url(item["url"]),
                     item.get("source_index"),
                     refresh=bool(attempt) or not analysis.get("catalog_version"),
                 )
-                selected = quality_catalog(fresh).get(key)
-                fps, hdr = item.get("traits", {}).get(key, [0, False])
-                if selected and (
-                    float(selected.get("fps") or 0) < fps or hdr and not selected.get("hdr")
+                selected = select_format(quality_catalog(fresh), key)
+                if (
+                    original
+                    and selected["kind"] == "video"
+                    and quality_order(selected)[:3] < quality_order(original)[:3]
                 ):
-                    raise ValueError("format_unavailable")
-                if not selected:
-                    raise ValueError("format_unavailable")
+                    raise ValueError("selection_mismatch")
+                original = selected
+                selected["duration"] = fresh.get("duration") if not fresh.get("is_live") else None
                 options = Options(
                     kind=selected["kind"],
                     container=selected["container"],
@@ -383,67 +528,92 @@ def download_lite(payload, emit=lambda data: None):
                     metadata=False,
                     organization="playlist" if analysis["playlist"] else "flat",
                 ).to_dict()
-
-                def progress(data, current=number, item_title=item["title"]):
-                    emit(
-                        data
-                        | {
-                            "phase": data.get("status", "running"),
-                            "current": current,
-                            "total_items": total,
-                            "title": item_title,
-                        }
-                    )
-
-                use_external = not attempt and use_aria(fresh, selected)
+                external = not attempt and use_aria(fresh, selected)
+                # Distinct downloader/format staging also avoids Beta 1's 40-character ID truncation.
+                identifier = identity(
+                    stamp, selected["video_stream"], selected["audio_stream"], external, attempt
+                )
+                stage = "download"
                 result = download(
                     {
-                        "id": f"{identifier}-{number}" + ("-aria" if use_external else ""),
+                        "id": identifier,
+                        "lite": True,
+                        "selected": selected,
                         "url": item["url"],
                         "source_index": item.get("source_index"),
                         "destination": str(target),
                         "options": options,
                         "playlist_title": analysis["title"] if analysis["playlist"] else "",
-                        "playlist_index": item["index"] if analysis["playlist"] else None,
+                        "playlist_index": i if analysis["playlist"] else None,
                     },
-                    progress,
+                    lambda data: report(item, data),
                     info_cache=fresh,
-                    direct_mp4=not attempt and selected.get("direct", False),
                     recovery=bool(attempt),
-                    aria=use_external,
+                    aria=external,
                 )
-                return result["files"], None
-            except (yt_dlp.utils.DownloadError, ValueError, OSError) as exc:
-                if attempt or isinstance(exc, ValueError):
-                    return [], {"index": item["index"], "code": error_code(exc)}
+                stage = "publish"
+                files = result["files"]
+                lower = (
+                    {"index": i, "height": selected["height"]}
+                    if key.startswith("video:max:")
+                    and selected["height"] < int(key.rsplit(":", 1)[1])
+                    else None
+                )
+                save_record(record, target, files, lower)
+                report(item, {}, "completed")
+                return files, None, lower
+            except (Cancelled, DownloadCancelled):
+                raise
+            except Exception as exc:
+                detail = diagnostic(getattr(exc, "stage", stage), exc, i, attempt + 1)
+                permanent = {
+                    "access_denied",
+                    "disk_full",
+                    "private_media",
+                    "unavailable",
+                    "invalid_url",
+                    "dependency_missing",
+                    "selection_mismatch",
+                    "hdr_unsupported",
+                    "conversion_failed",
+                    "merge_failed",
+                    "publish_failed",
+                    "invalid_options",
+                }
+                if attempt or detail["code"] in permanent:
+                    report(item, {}, "failed")
+                    return [], detail, None
                 turbo.feedback(failed=True)
-                emit({"phase": "checking", "current": number, "total": total})
+                if detail.get("http") == 429 or detail["code"] == "network_error":
+                    time.sleep(2 if detail.get("http") == 429 else 1)
 
-    for completed, error in turbo.ordered_map(
-        one, enumerate(analysis["items"], 1), turbo.prefs["downloads"] + turbo.prefs["conversions"]
+    files, failures, lower = [], [], []
+    for paths, failure, adjusted in turbo.ordered_map(
+        one, items, turbo.prefs["downloads"] + turbo.prefs["conversions"]
     ):
-        files.extend(completed)
-        if error:
-            failures.append(error)
-    if not files:
-        raise ValueError(failures[0]["code"] if failures else "no_output")
-    if mode == "zip":
-        emit({"phase": "archiving", "progress": 0})
-        archive = turbo.zip_pool.submit(
-            create_zip,
-            files,
-            destination / (safe_name(analysis["title"]) + ".zip"),
-            compression=0,
-            subfolders=True,
-            progress=lambda event: emit(event | {"phase": "archiving"}),
-        ).result()
-        files = [str(archive)]
-        # Files are removed only after SHA256/CRC validation and final publication.
-        shutil.rmtree(working)
-    return {
-        "files": files,
-        "completed": total - len(failures),
-        "failed": len(failures),
-        "skipped": analysis.get("skipped", 0),
-        "failures": failures,
-    }
+        files.extend(paths)
+        if failure:
+            failures.append(failure)
+        if adjusted:
+            lower.append(adjusted)
+    status = "failed" if not files else "partial" if failures or counts["skipped"] else "complete"
+    result = counts | {"status": status, "failures": failures, "lower": lower, "remaining": 0}
+    if mode == "zip" and files:
+        state = {
+            "title": safe_name(analysis["title"], 70),
+            "result": result,
+            "files": [str(Path(f).relative_to(target)) for f in files],
+        }
+        tmp = working / "archive.tmp"
+        tmp.write_text(json.dumps(state), "utf8")
+        tmp.replace(working / "archive.json")
+        try:
+            files = [finish_zip(files, destination, analysis["title"], emit)]
+        except (Cancelled, DownloadCancelled):
+            raise
+        except Exception as exc:
+            detail = diagnostic("zip", exc)
+            return result | {"status": "zip_failed", "archive_error": detail, "files": files}
+    if status == "complete":
+        cleanup_stage(working)
+    return result | {"files": files}

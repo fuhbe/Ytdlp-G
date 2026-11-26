@@ -31,7 +31,7 @@ def data_dir() -> Path:
 
 def safe_name(value: str, limit: int = 100) -> str:
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip(" .")
-    name = name[:limit].rstrip(" .") or "untitled"
+    name = name[:limit].encode("utf8")[:220].decode("utf8", "ignore").rstrip(" .") or "untitled"
     if name.split(".")[0].upper() in RESERVED:
         name = "_" + name
     return name
@@ -133,3 +133,15 @@ def publish(source: Path, target: Path, *, immutable=False) -> Path:
     finally:
         if temporary:
             temporary.unlink(missing_ok=True)
+
+
+def cleanup_stage(path):
+    """A cleanup error cannot undo an already published result."""
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        from .diagnostics import diagnostic
+
+        diagnostic("cleanup", exc)

@@ -1,5 +1,5 @@
 #define AppName "Ytdlp-G"
-#define AppVersion "1.4.0-beta.1"
+#define AppVersion "1.4.0-beta.2"
 [Setup]
 AppId={{D6B67919-F420-4550-B954-474B95E4A72A}
 AppName={#AppName}

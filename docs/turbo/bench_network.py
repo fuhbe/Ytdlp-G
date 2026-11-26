@@ -87,7 +87,7 @@ with tempfile.TemporaryDirectory() as d:
     )
     for i in range(3):
         for page, key, typ in [
-            ("stream.m3u8", "video:mp4:360", "hls"),
+            ("stream.m3u8", "video:best", "hls"),
             ("list.html", "audio:mp3:convert", "list"),
         ]:
             a = timed(typ + "_inspect", lambda: lite.inspect_lite(base + page + "?i=" + str(i)))

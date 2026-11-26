@@ -61,6 +61,11 @@ def dispatch(request):
     from .archive import create_zip
     from .media import convert, probe, version
 
+    if ENGINE is None:
+        from .diagnostics import configure_logging
+        from .paths import data_dir
+
+        configure_logging(data_dir(), worker=True)
     try:
         action, payload = request["action"], request["payload"]
 
@@ -103,6 +108,10 @@ def dispatch(request):
             from .lite import inspect_lite
 
             result = inspect_lite(payload["url"], progress)
+        elif action == "lite_zip_retry":
+            from .lite import retry_zip
+
+            result = retry_zip(payload, progress)
         elif action == "lite_download":
             from .lite import download_lite
 
@@ -145,7 +154,7 @@ def dispatch(request):
         else:
             raise ValueError("invalid_options")
         emit("result", result)
-    except BaseException as exc:
+    except Exception as exc:
         from .downloader import error_code
 
         # Stack function names help diagnostics without disclosing URLs or paths.
