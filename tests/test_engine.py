@@ -18,7 +18,11 @@ def wheel(package, extra=None):
     with zipfile.ZipFile(stream, "w") as archive:
         archive.writestr(package + "/__init__.py", "")
         if extra:
-            archive.writestr(*extra)
+            # ZipInfo normally rewrites backslashes on Windows. Preserve the raw
+            # malformed member name so this test exercises the installer on both OSes.
+            entry = zipfile.ZipInfo()
+            entry.filename = extra[0]
+            archive.writestr(entry, extra[1])
     return stream.getvalue()
 
 
