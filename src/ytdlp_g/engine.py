@@ -84,14 +84,17 @@ def install_wheel(meta, target, package):
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         total = 0
         for member in archive.infolist():
-            relative = PurePosixPath(member.filename)
+            # On Windows ZipInfo.filename has already normalized backslashes;
+            # validate the original archive name before constructing any path.
+            raw_name = member.orig_filename
+            relative = PurePosixPath(raw_name)
             total += member.file_size
             if (
                 relative.is_absolute()
                 or ".." in relative.parts
-                or "\\" in member.filename
+                or "\\" in raw_name
                 or not relative.parts
-                or ":" in member.filename
+                or ":" in raw_name
                 or total > MAX_DOWNLOAD * 4
                 or (member.external_attr >> 16) & 0o170000 == 0o120000
                 or not (
