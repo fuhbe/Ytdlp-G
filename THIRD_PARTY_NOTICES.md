@@ -40,3 +40,5 @@ PySide/Qt/Shiboken 6.12.0 and QuickJS-ng 0.17.0 license texts are explicitly inc
 in `licenses/upstream/`, even when a wheel lacks LICENSE files. Origins and SHA256
 hashes are recorded in `assets/licenses/PROVENANCE.json`. Windows packages also
 include the PSF license for the bundled Python runtime.
+
+The Turbo beta includes the unmodified aria2c 1.37.0 Windows executable. Its GPL license and upstream notices are in `licenses/aria2`. [Corresponding upstream source](https://github.com/aria2/aria2/tree/release-1.37.0).

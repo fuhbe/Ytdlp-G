@@ -272,5 +272,20 @@
   "engine_update": "Update engine",
   "engine_updating": "Checking for yt-dlp engine updates…",
   "engine_ready": "yt-dlp {version} ready. Analyze the link again.",
-  "engine_offline": "Update unavailable. Kept engine {version}; try again later."
+  "engine_offline": "Update unavailable. Kept engine {version}; try again later.",
+  "performance": "Performance",
+  "perf_profile": "Profile",
+  "perf_encoder": "Encoder (CPU/GPU)",
+  "perf_downloader": "Downloader",
+  "perf_downloads": "Concurrent downloads",
+  "perf_conversions": "Concurrent conversions",
+  "perf_fragments": "Fragment limit",
+  "perf_cache": "Smart cache",
+  "clear_cache": "Clear cache",
+  "perf_auto": "Automatic",
+  "perf_eco": "Economy",
+  "perf_balanced": "Balanced",
+  "perf_fast": "Fast",
+  "perf_native": "Native",
+  "perf_hdr": "8-bit H.264 output"
 }

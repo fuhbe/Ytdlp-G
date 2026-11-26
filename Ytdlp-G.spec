@@ -9,7 +9,7 @@ yt_binaries = []
 yt_hidden = collect_submodules('yt_dlp', filter=lambda name: not name.startswith('yt_dlp.__pyinstaller'))
 ejs_data, ejs_binaries, ejs_hidden = collect_all('yt_dlp_ejs')
 bin_dir = root / 'build' / 'dependencies' / 'bin'
-helpers = [(str(path), 'bin') for path in bin_dir.iterdir() if path.suffix.lower() == '.dll' or path.name.lower() in {'ffmpeg.exe', 'ffprobe.exe', 'qjs.exe'}]
+helpers = [(str(path), 'bin') for path in bin_dir.iterdir() if path.suffix.lower() == '.dll' or path.name.lower() in {'ffmpeg.exe', 'ffprobe.exe', 'qjs.exe', 'aria2c.exe'}]
 data = [(str(root / 'src/ytdlp_g/i18n'), 'ytdlp_g/i18n'), (str(root / 'src/ytdlp_g/resources'), 'ytdlp_g/resources')]
 for language in ('pt_BR', 'es'):
     translation = Path(QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)) / f'qtbase_{language}.qm'

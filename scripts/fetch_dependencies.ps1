@@ -4,7 +4,7 @@ $DependencyRoot = Join-Path $ProjectRoot 'build\dependencies'
 $BinRoot = Join-Path $DependencyRoot 'bin'
 $LicenseRoot = Join-Path $DependencyRoot 'licenses'
 New-Item -ItemType Directory -Force $BinRoot, $LicenseRoot | Out-Null
-foreach ($Name in @('ffmpeg', 'quickjs')) {
+foreach ($Name in @('ffmpeg', 'quickjs','aria2')) {
     $Entry = $Manifest.$Name
     $Extension = if ($Name -eq 'quickjs') { 'exe' } else { 'zip' }
     $Archive = Join-Path $DependencyRoot "$Name.$Extension"
@@ -28,6 +28,13 @@ foreach ($Name in @('ffmpeg', 'quickjs')) {
         Get-ChildItem $Extract -Recurse -File | Where-Object { $_.Name -match '(?i)license|copying|readme' } | ForEach-Object {
             Copy-Item $_.FullName (Join-Path $NoticeDir $_.Name) -Force
         }
+    } elseif ($Name -eq 'aria2') {
+        Expand-Archive $Archive $Extract
+        $Aria = Get-ChildItem $Extract -Recurse -Filter aria2c.exe | Select-Object -First 1
+        Copy-Item $Aria.FullName $BinRoot -Force
+        $Notices = Join-Path $LicenseRoot 'aria2'
+        New-Item -ItemType Directory -Force $Notices | Out-Null
+        Get-ChildItem $Aria.Directory.FullName -File -Exclude '*.exe' | Copy-Item -Destination $Notices -Force
     } else {
         Copy-Item $Archive (Join-Path $BinRoot 'qjs.exe') -Force
     }

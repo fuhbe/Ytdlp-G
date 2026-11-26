@@ -79,12 +79,13 @@ def create_zip(
                     raise ValueError("zip_integrity")
         if cancelled():
             raise Cancelled()
-        result = publish(temporary, target)
+        result = publish(temporary, target, immutable=True)
         # Publish copies bytes; verify the actual destination as well.
         try:
-            with zipfile.ZipFile(result) as archive:
-                if archive.testzip() is not None:
-                    raise ValueError("zip_integrity")
+            if not temporary.samefile(result):
+                with zipfile.ZipFile(result) as archive:
+                    if archive.testzip() is not None:
+                        raise ValueError("zip_integrity")
         except BaseException:
             result.unlink(missing_ok=True)
             raise

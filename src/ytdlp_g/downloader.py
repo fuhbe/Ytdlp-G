@@ -5,8 +5,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import yt_dlp
+import yt_dlp  # noqa: F401 (public adapter reference)
 
+from . import turbo
 from .archive import create_zip
 from .media import ensure_mp4, executable
 from .models import Options
@@ -35,7 +36,8 @@ def base_options():
         "socket_timeout": 15,
         "windowsfilenames": True,
         "noprogress": True,
-        "cachedir": False,
+        "cachedir": turbo.native_dir(),
+        "concurrent_fragment_downloads": turbo.connections(),
         "color": "never",
     }
 
@@ -102,7 +104,7 @@ def inspect(url, playlist=False, page=1, page_size=100):
             "playlist_items": f"{(page - 1) * page_size + 1}:{page * page_size}",
             "ignoreerrors": True,
         }
-    with yt_dlp.YoutubeDL(options) as ydl:
+    with turbo.youtube_dl(options) as ydl:
         info = ydl.extract_info(url, download=False)
         if not info:
             raise ValueError("unavailable")
@@ -264,7 +266,15 @@ def organization_folder(info, options):
     return Path(safe_name(value))
 
 
-def download(payload, emit=lambda event: None):
+def download(
+    payload,
+    emit=lambda event: None,
+    *,
+    info_cache=None,
+    direct_mp4=False,
+    aria=False,
+    recovery=False,
+):
     options = Options.from_dict(payload["options"])
     destination = Path(payload["destination"]).resolve()
     identifier = safe_name(payload["id"], 40)
@@ -278,6 +288,7 @@ def download(payload, emit=lambda event: None):
         elif status == "downloading":
             total = event.get("total_bytes") or event.get("total_bytes_estimate") or 0
             downloaded = event.get("downloaded_bytes", 0)
+            turbo.feedback(event.get("speed") or 0)
             emit(
                 {
                     "status": "running",
@@ -291,10 +302,52 @@ def download(payload, emit=lambda event: None):
             )
 
     extraction = download_options(options, stage, hook)
+    if (
+        not recovery
+        and info_cache
+        and options.audio_stream
+        and options.video_stream
+        and options.container == "mp4"
+    ):
+        streams = {f["format_id"]: f for f in info_cache.get("formats", [])}
+        video = streams.get(options.video_stream, {})
+        audio = streams.get(options.audio_stream, {})
+        args = []
+        if not str(video.get("vcodec", "")).startswith(("h264", "avc")):
+            from .media import ENCODER_ARGS, working_encoders
+
+            encoder = working_encoders(executable("ffmpeg"), turbo.prefs["encoder"])[0]
+            args += [
+                "-c:v",
+                encoder,
+                *ENCODER_ARGS[encoder],
+                "-pix_fmt",
+                "yuv420p",
+                "-vf",
+                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            ]
+        if not str(audio.get("acodec", "")).startswith(("aac", "mp4a")):
+            args += ["-c:a", "aac", "-b:a", "320k"]
+        extraction["postprocessor_args"] = {"merger+ffmpeg_o": args}
+        direct_mp4 = True
+    if direct_mp4:
+        extraction["merge_output_format"] = "mp4"
+    if aria:
+        n = turbo.connections()
+        extraction["external_downloader"] = {
+            "http": executable("aria2c"),
+            "https": executable("aria2c"),
+        }
+        extraction["external_downloader_args"] = {
+            "aria2c": ["-x", str(n), "-s", str(n), "-k", "1M", "--max-tries=2", "--retry-wait=1"]
+        }
     if payload.get("source_index"):
         extraction["playlist_items"] = str(int(payload["source_index"]))
-    with yt_dlp.YoutubeDL(extraction) as ydl:
-        info = ydl.extract_info(validate_url(payload["url"]), download=True)
+    with turbo.youtube_dl(extraction) as ydl:
+        if info_cache is None:
+            info = ydl.extract_info(validate_url(payload["url"]), download=True)
+        else:
+            info = ydl.process_ie_result(info_cache, download=True)
         if not info:
             raise ValueError("unavailable")
     if options.kind in {"video", "video_only"} and options.container == "mp4":
@@ -308,6 +361,7 @@ def download(payload, emit=lambda event: None):
             raise ValueError("no_output")
         ensure_mp4(
             candidates[0],
+            progress=emit,
             require_audio=options.kind == "video",
             ffmpeg=options.ffmpeg,
             ffprobe=options.ffprobe,
@@ -325,7 +379,7 @@ def download(payload, emit=lambda event: None):
     files = sorted(
         p
         for p in stage.iterdir()
-        if p.is_file() and not p.name.endswith((".part", ".ytdl", ".temp"))
+        if p.is_file() and not p.name.endswith((".part", ".ytdl", ".temp", ".aria2"))
     )
     if not files:
         raise ValueError("no_output")
@@ -336,7 +390,7 @@ def download(payload, emit=lambda event: None):
     if options.output_mode in {"normal", "both"}:
         for source in files:
             target = folder / (prefix + safe_name(source.stem, 110) + source.suffix)
-            published.append(str(publish(source, target)))
+            published.append(str(publish(source, target, immutable=True)))
     if options.output_mode in {"zip", "both"}:
         emit({"status": "archiving", "progress": 0})
         result = create_zip(

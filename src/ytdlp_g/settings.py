@@ -30,6 +30,7 @@ class Settings:
             "close_tray": False,
             "options": Options().to_dict(),
             "profiles": {},
+            "performance": {},
         }
         if path.exists():
             try:

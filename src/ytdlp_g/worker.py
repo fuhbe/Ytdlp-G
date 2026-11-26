@@ -3,15 +3,20 @@
 import json
 import os
 import sys
+import threading
+import time
 import traceback
 from pathlib import Path
 
 EVENTS = None
+WRITE_LOCK = threading.RLock()
+ENGINE = None
 
 
 def emit(kind, data):
-    EVENTS.write(json.dumps({"kind": kind, "data": data}, ensure_ascii=True) + "\n")
-    EVENTS.flush()
+    with WRITE_LOCK:
+        EVENTS.write(json.dumps({"kind": kind, "data": data}, ensure_ascii=True) + "\n")
+        EVENTS.flush()
 
 
 def main():
@@ -27,31 +32,73 @@ def main():
             os.setsid()
         except OSError:
             pass
+    return dispatch(json.loads(Path(request_path).read_text("utf-8")))
+
+
+def serve():
+    import socket
+
+    global EVENTS
+    if os.name != "nt":
+        os.setsid()
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = open(os.devnull, "w")
+    with socket.create_connection(("127.0.0.1", int(sys.argv[-1])), timeout=15) as connection:
+        connection.settimeout(None)
+        with (
+            connection.makefile("w", encoding="utf8") as EVENTS,
+            connection.makefile("r", encoding="utf8") as requests,
+        ):
+            emit("hello", os.environ.pop("YTDLPG_SESSION_KEY"))
+            for line in requests:
+                dispatch(json.loads(line))
+    return 0
+
+
+def dispatch(request):
+    global ENGINE
     from . import __version__
     from .archive import create_zip
     from .media import convert, probe, version
 
     try:
-        request = json.loads(Path(request_path).read_text("utf-8"))
         action, payload = request["action"], request["payload"]
 
+        last = {}
+
         def progress(data):
-            emit("progress", data)
+            phase = (data.get("phase"), data.get("status"), data.get("current"))
+            now = time.monotonic()
+            with WRITE_LOCK:
+                if (
+                    phase == last.get("phase")
+                    and now - last["stamp"] < 0.12
+                    and data.get("progress") != 100
+                ):
+                    return
+                last.update(phase=phase, stamp=now)
+                emit("progress", data)
 
         from .engine import activate_engine, prepare_engine
 
-        engine = activate_engine(
-            prepare_engine(
-                force=action == "engine_update",
-                check=action
-                in {"engine_update", "lite_inspect", "lite_download", "inspect", "download"},
-                progress=progress,
+        if ENGINE is None:
+            ENGINE = activate_engine(
+                prepare_engine(
+                    force=action == "engine_update",
+                    check=action in {"engine_update", "engine_background"},
+                    progress=progress,
+                )
             )
-        )
+        engine = ENGINE
+        from . import turbo
+
+        turbo.configure(payload.get("performance", {}))
         from .downloader import download, inspect
 
-        if action == "engine_update":
+        if action in {"engine_update", "engine_background"}:
             result = engine
+        elif action == "clear_cache":
+            result = turbo.clear_cache()
         elif action == "lite_inspect":
             from .lite import inspect_lite
 

@@ -22,9 +22,9 @@ def data_dir() -> Path:
     if getattr(sys, "frozen", False) and portable.exists():
         root = portable.parent / "data"
     elif os.name == "nt":
-        root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Ytdlp-G"
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Ytdlp-G Beta"
     else:
-        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "Ytdlp-G"
+        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "Ytdlp-G Beta"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -86,7 +86,7 @@ def validate_url(value: str) -> str:
         raise ValueError("invalid_url") from exc
 
 
-def publish(source: Path, target: Path) -> Path:
+def publish(source: Path, target: Path, *, immutable=False) -> Path:
     """Copy once, then publish atomically without replacing any existing file.
 
     Windows rename refuses existing destinations; POSIX hardlink has the same
@@ -96,6 +96,19 @@ def publish(source: Path, target: Path) -> Path:
     import tempfile
 
     target.parent.mkdir(parents=True, exist_ok=True)
+    if immutable:
+        # Caller owns this completed staging file and will only unlink it.
+        for index in range(10000):
+            candidate = (
+                target if not index else target.with_name(f"{target.stem} ({index}){target.suffix}")
+            )
+            try:
+                os.link(source, candidate)
+                return candidate
+            except FileExistsError:
+                continue
+            except OSError:
+                break
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".ytdlpg-", delete=False) as out:

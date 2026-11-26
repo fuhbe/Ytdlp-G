@@ -171,7 +171,7 @@ def test_zip_cancel_and_publication_failure_keep_originals(tmp_path, monkeypatch
     assert source.exists() and not target.exists()
     assert not list(tmp_path.glob(".ytdlpg-zip-*"))
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise OSError("disk full")
 
     monkeypatch.setattr("ytdlp_g.archive.publish", fail)

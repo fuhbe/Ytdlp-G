@@ -5,6 +5,10 @@ import sys
 
 
 def main():
+    if "--session" in sys.argv:
+        from .worker import serve
+
+        return serve()
     if "--worker" in sys.argv:
         from .worker import main as worker_main
 
@@ -34,6 +38,8 @@ def main():
     configure_logging(root)
     window = LiteWindow(settings)
     window.show()
+    if "--smoke-test" not in sys.argv:
+        QTimer.singleShot(0, window.background_update)
     smoke_failed = []
     if "--smoke-test" in sys.argv:
         window.smoke_mode = True

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 from .paths import publish, safe_name
@@ -237,11 +238,77 @@ def convert(payload, progress=lambda event: None):
             + "."
             + container
         )
-        result = publish(output, destination / name)
+        result = publish(output, destination / name, immutable=True)
     return {"files": [str(result)], "progress": 100}
 
 
-def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe=""):
+ENCODER_ARGS = {
+    "h264_qsv": ["-global_quality", "18", "-preset", "fast"],
+    "h264_nvenc": ["-preset", "p5", "-rc", "vbr", "-cq", "18", "-b:v", "0"],
+    "h264_amf": [
+        "-usage",
+        "transcoding",
+        "-quality",
+        "quality",
+        "-rc",
+        "cqp",
+        "-qp_i",
+        "18",
+        "-qp_p",
+        "18",
+    ],
+    "libx264": ["-crf", "18", "-preset", "veryfast"],
+}
+
+
+@lru_cache(maxsize=12)
+def working_encoders(binary, requested):
+    if requested == "libx264":
+        return ["libx264"]
+    result = subprocess.run(
+        [binary, "-hide_banner", "-encoders"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        **hidden_process(),
+    )
+    working = []
+    for name in ENCODER_ARGS:
+        if name == "libx264" or requested not in {"auto", name} or name not in result.stdout:
+            continue
+        try:
+            check = subprocess.run(
+                [
+                    binary,
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=size=256x144:rate=30",
+                    "-frames:v",
+                    "4",
+                    "-c:v",
+                    name,
+                    *ENCODER_ARGS[name],
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                capture_output=True,
+                timeout=10,
+                **hidden_process(),
+            )
+            if not check.returncode:
+                working.append(name)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return working + ["libx264"]
+
+
+def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe="", progress=lambda event: None):
+    from . import turbo
+
     """Verify sound and normalize incompatible source codecs to H.264/AAC MP4."""
     source = Path(source)
     info = probe(source, ffprobe)
@@ -281,27 +348,66 @@ def ensure_mp4(source, require_audio=True, ffmpeg="", ffprobe=""):
             "-c:v",
             "copy" if copy_video else "libx264",
         ]
-        if not copy_video:
-            args += [
-                "-crf",
-                "18",
-                "-preset",
-                "medium",
-                "-pix_fmt",
-                "yuv420p",
-                "-vf",
-                "pad=ceil(iw/2)*2:ceil(ih/2)*2",
-            ]
-        args += ["-c:a", "copy" if copy_audio else "aac"]
-        if not copy_audio:
-            args += ["-b:a", "320k"]
-        args += ["-map_metadata", "0", "-map_chapters", "0", "-movflags", "+faststart", str(output)]
-        # No artificial encoding timeout: long/high-resolution files may take time.
-        result = subprocess.run(
-            args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **hidden_process()
-        )
-        if result.returncode:
-            raise ValueError("conversion_failed")
+        base = args[:-1]
+        encoders = ["copy"] if copy_video else working_encoders(args[0], turbo.prefs["encoder"])
+        duration = float(info.get("format", {}).get("duration") or 0)
+        with turbo.conversion_slots:
+            for encoder in encoders:
+                output.unlink(missing_ok=True)
+                args = base + [encoder]
+                if not copy_video:
+                    args += [
+                        *ENCODER_ARGS[encoder],
+                        "-threads",
+                        str(min(8, max(1, (os.cpu_count() or 2) // turbo.prefs["conversions"]))),
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-vf",
+                        "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                    ]
+                args += ["-c:a", "copy" if copy_audio else "aac"]
+                if not copy_audio:
+                    args += ["-b:a", "320k"]
+                args += [
+                    "-map",
+                    "0:s?",
+                    "-c:s",
+                    "mov_text",
+                    "-map_metadata",
+                    "0",
+                    "-map_chapters",
+                    "0",
+                    "-movflags",
+                    "+faststart",
+                    "-progress",
+                    "pipe:1",
+                    "-nostats",
+                    str(output),
+                ]
+                with subprocess.Popen(
+                    args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    **hidden_process(),
+                ) as proc:
+                    for line in proc.stdout:
+                        if line.startswith("out_time_us=") and duration:
+                            try:
+                                fraction = float(line.split("=", 1)[1]) / 1e6 / duration
+                            except ValueError:
+                                continue
+                            progress(
+                                {
+                                    "status": "processing",
+                                    "encoder": encoder,
+                                    "progress": max(0, min(99, 100 * fraction)),
+                                }
+                            )
+                if not proc.returncode:
+                    break
+            else:
+                raise ValueError("conversion_failed")
         final = probe(output, ffprobe)
         types = {s.get("codec_type") for s in final["streams"]}
         if "video" not in types or (require_audio and "audio" not in types):

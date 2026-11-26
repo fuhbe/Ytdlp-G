@@ -272,5 +272,20 @@
   "engine_update": "Actualizar motor",
   "engine_updating": "Buscando actualizaciones del motor yt-dlp…",
   "engine_ready": "yt-dlp {version} listo. Analiza el enlace de nuevo.",
-  "engine_offline": "No se pudo actualizar. Se conservó el motor {version}; inténtalo más tarde."
+  "engine_offline": "No se pudo actualizar. Se conservó el motor {version}; inténtalo más tarde.",
+  "performance": "Rendimiento",
+  "perf_profile": "Perfil",
+  "perf_encoder": "Codificador (CPU/GPU)",
+  "perf_downloader": "Motor de descarga",
+  "perf_downloads": "Descargas simultáneas",
+  "perf_conversions": "Conversiones simultáneas",
+  "perf_fragments": "Límite de fragmentos",
+  "perf_cache": "Caché inteligente",
+  "clear_cache": "Borrar caché",
+  "perf_auto": "Automático",
+  "perf_eco": "Económico",
+  "perf_balanced": "Equilibrado",
+  "perf_fast": "Rápido",
+  "perf_native": "Nativo",
+  "perf_hdr": "Salida H.264 de 8 bits"
 }

@@ -9,6 +9,8 @@ import functools
 import hashlib
 import json
 import os
+import secrets
+import socket
 import struct
 import subprocess
 import tempfile
@@ -174,6 +176,60 @@ def run_smoke(package, report):
         thread.start()
         try:
             url = f"http://127.0.0.1:{server.server_port}/authorized%20sample.mp4"
+            # Exercise the persistent frozen entry with no system helpers on PATH.
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.settimeout(25)
+                token = secrets.token_hex(32)
+                opts = process_options | {"env": environment | {"YTDLPG_SESSION_KEY": token}}
+                with subprocess.Popen(
+                    [str(executable), "--session", str(listener.getsockname()[1])], **opts
+                ) as child:
+                    try:
+                        channel, _ = listener.accept()
+                        with channel, channel.makefile("rwb") as pipe:
+                            channel.settimeout(40)
+                            assert json.loads(pipe.readline())["data"] == token
+
+                            def call(action, payload):
+                                pipe.write(
+                                    json.dumps(
+                                        {
+                                            "action": action,
+                                            "payload": payload
+                                            | {"performance": {"downloader": "aria2c"}},
+                                        }
+                                    ).encode()
+                                    + b"\n"
+                                )
+                                pipe.flush()
+                                while True:
+                                    msg = json.loads(pipe.readline())
+                                    assert msg["kind"] != "error", msg
+                                    if msg["kind"] == "result":
+                                        return msg["data"]
+
+                            catalog = call("lite_inspect", {"url": url})
+                            saved = call(
+                                "lite_download",
+                                dict(
+                                    analysis=catalog,
+                                    quality="video:mp4:90",
+                                    mode="normal",
+                                    destination=str(root / "persistent"),
+                                ),
+                            )
+                            assert Path(saved["files"][0]).is_file()
+                        assert child.wait(timeout=15) == 0
+                    finally:
+                        if child.poll() is None:
+                            child.kill()
+            evidence["checks"].append("persistent worker: inspect, download, shutdown")
+            subprocess.run(
+                [str(tools / "aria2c.exe"), "--version"], check=True, timeout=10, **process_options
+            )
+            evidence["checks"].append("bundled aria2c")
             lite = worker("lite_inspect", {"url": url})
             assert {c["key"] for c in lite["choices"]} >= {"video:mp4:90", "audio:mp3:convert"}
             native = worker(

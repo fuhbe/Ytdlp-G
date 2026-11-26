@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..i18n import Translator
 from ..paths import validate_url
-from ..tasks import Task
+from ..tasks import MediaSession, Task
 
 
 class AeroTitle(QFrame):
@@ -64,6 +64,9 @@ class LiteWindow(QWidget):
         super().__init__()
         self.settings = settings
         self.tr = Translator(settings.values["language"])
+        self.session = None
+        self.updater = None
+        self.rotate_session = False
         self.tasks = set()
         self.current_task = None
         self.analysis = None
@@ -93,6 +96,8 @@ class LiteWindow(QWidget):
         top.addWidget(heading, 1)
         self.engine_button = self.button("engine_update", self.update_engine)
         top.addWidget(self.engine_button)
+        self.perf_button = self.button("performance", self.performance_dialog)
+        top.addWidget(self.perf_button)
         self.language = QComboBox()
         for code, text in (("pt-BR", "PT-BR"), ("en", "EN"), ("es", "ES")):
             self.language.addItem(text, code)
@@ -229,7 +234,19 @@ class LiteWindow(QWidget):
         box.exec()
 
     def run_task(self, action, payload, callback, progress=None, error=None):
-        task = Task(action, payload, self)
+        persistent = action in {"lite_inspect", "lite_download", "clear_cache"}
+        payload = payload | {"performance": self.settings.values.get("performance", {})}
+        if persistent:
+            if self.session and (self.rotate_session or self.session.calls >= 64):
+                self.session.shutdown()
+                self.session.deleteLater()
+                self.session = None
+            if self.session is None:
+                self.session = MediaSession(self)
+            self.rotate_session = False
+            task = self.session
+        else:
+            task = Task(action, payload, self)
         self.tasks.add(task)
         self.current_task = task
         self.set_busy(True)
@@ -242,10 +259,19 @@ class LiteWindow(QWidget):
             if self.current_task is task:
                 self.current_task = None
             self.set_busy(False)
-            task.deleteLater()
+            if persistent:
+                task.progress.disconnect()
+                task.result.disconnect()
+                task.error.disconnect()
+                task.finished.disconnect()
+            else:
+                task.deleteLater()
 
         task.finished.connect(finished)
-        task.start()
+        if persistent:
+            task.start_job(action, payload)
+        else:
+            task.start()
         return task
 
     def set_busy(self, busy):
@@ -254,12 +280,15 @@ class LiteWindow(QWidget):
             self.paste,
             self.analyze_button,
             self.engine_button,
+            self.perf_button,
             self.kind,
             self.output,
             self.destination,
             self.browse,
         ):
             control.setEnabled(not busy)
+        if busy and self.current_task and self.current_task.action == "lite_inspect":
+            self.url.setEnabled(True)
         self.cancel_button.setEnabled(busy)
         self.quality.setEnabled(not busy and self.quality.count() > 0)
         self.update_download_enabled()
@@ -270,6 +299,8 @@ class LiteWindow(QWidget):
         )
 
     def invalidate(self):
+        if self.current_task and self.current_task.action == "lite_inspect":
+            self.cancel()
         self.analysis = None
         self.analysis_url = ""
         self.quality.clear()
@@ -277,12 +308,74 @@ class LiteWindow(QWidget):
         self.summary.setText(self.tr("lite_instruction"))
         self.update_download_enabled()
 
+    def performance_dialog(self):
+        from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QSpinBox
+
+        d = QDialog(self)
+        d.setWindowTitle(self.tr("performance"))
+        form = QFormLayout(d)
+        values = self.settings.values["performance"]
+        readers = {}
+        for key, items in {
+            "profile": ["auto", "eco", "balanced", "fast", "turbo"],
+            "encoder": ["auto", "libx264", "h264_qsv", "h264_nvenc", "h264_amf"],
+            "downloader": ["auto", "native", "aria2c"],
+        }.items():
+            combo = QComboBox()
+            for item in items:
+                combo.addItem(
+                    self.tr("perf_" + item)
+                    if item in {"auto", "eco", "balanced", "fast", "native"}
+                    else item,
+                    item,
+                )
+            combo.setCurrentIndex(max(0, combo.findData(values.get(key, "auto"))))
+            form.addRow(self.tr("perf_" + key), combo)
+            readers[key] = combo.currentData
+        for key, limit, default in [
+            ("downloads", 8, 2),
+            ("conversions", 4, 1),
+            ("fragments", 16, 16),
+        ]:
+            spin = QSpinBox()
+            spin.setRange(1, limit)
+            spin.setValue(values.get(key, default))
+            form.addRow(self.tr("perf_" + key), spin)
+            readers[key] = spin.value
+        cache = QCheckBox()
+        cache.setChecked(values.get("cache", True))
+        form.addRow(self.tr("perf_cache"), cache)
+        readers["cache"] = cache.isChecked
+        clear = self.button(
+            "clear_cache",
+            lambda: (d.reject(), self.run_task("clear_cache", {}, lambda _: self.invalidate())),
+        )
+        form.addRow(clear)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(d.accept)
+        buttons.rejected.connect(d.reject)
+        form.addRow(buttons)
+        if d.exec():
+            self.settings.values["performance"] = {k: get() for k, get in readers.items()}
+            self.settings.save()
+            self.rotate_session = True
+
+    def background_update(self):
+        self.updater = Task("engine_background", {}, self)
+        self.updater.result.connect(
+            lambda data: setattr(self, "rotate_session", data.get("status") == "updated")
+        )
+        self.updater.start()
+
     def update_engine(self):
         if self.tasks:
             return
         self.progress.setRange(0, 0)
 
         def result(data):
+            self.rotate_session = True
             self.invalidate()
             self.progress.setRange(0, 100)
             key = (
@@ -347,6 +440,10 @@ class LiteWindow(QWidget):
                     text = self.tr("lite_mp3_quality")
                 elif choice["kind"] == "video":
                     text = f"{choice['height']}p · {choice['container'].upper()}"
+                    if choice.get("fps"):
+                        text += f" · {choice['fps']:g} fps"
+                    if choice.get("hdr"):
+                        text += " · " + self.tr("perf_hdr")
                 else:
                     low, high = choice["bitrate_min"], choice["bitrate_max"]
                     bitrate = (
@@ -413,9 +510,18 @@ class LiteWindow(QWidget):
             data.get("total_items")
             or (data.get("total") if phase in {"analyzing", "checking"} else 0),
         )
-        self.status.setText(self.tr(key) + (f" · {current}/{total or '?'}" if current else ""))
+        detail = f" · {current}/{total or '?'}" if current else ""
+        if data.get("speed"):
+            detail += f" · {data['speed'] / 1048576:.1f} MiB/s"
+        if data.get("eta"):
+            detail += f" · {data['eta']:.0f} s"
+        if data.get("encoder"):
+            detail += f" · {data['encoder']}"
+        self.status.setText(self.tr(key) + detail)
         if (
-            phase in {"engine_updating", "analyzing", "checking", "processing"}
+            phase in {"engine_updating", "analyzing", "checking"}
+            or phase == "processing"
+            and not data.get("progress")
             or phase == "running"
             and not data.get("total")
         ):
@@ -484,6 +590,11 @@ class LiteWindow(QWidget):
         for task in list(self.tasks):
             task.cancel()
             task.process.waitForFinished(5000)
+        if self.session:
+            self.session.shutdown()
+        if self.updater and self.updater.process.processId():
+            self.updater.cancel()
+            self.updater.process.waitForFinished(5000)
         event.accept()
 
     def smoke_close(self):
