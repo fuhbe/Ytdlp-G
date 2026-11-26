@@ -2,6 +2,7 @@
 
 ## 1.3.0 — Updating engine, MP4 with sound and MP3-only audio
 
+- Refresh the FFmpeg 8.1 shared build after the former upstream asset expired; verify its published checksum and GitHub asset digest.
 - Bundle yt-dlp 2026.11.23 and check for stable engine updates daily before network operations.
 - Add an **Update engine** button; verify downloads with SHA256 and install matching EJS scripts atomically in user data. Retain a working engine when offline or an update cannot load.
 - Show only actual video resolutions with audio, including separate adaptive streams, and always deliver MP4. Normalize incompatible codecs to H.264/AAC when necessary.

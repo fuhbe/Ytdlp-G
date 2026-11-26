@@ -11,7 +11,7 @@ source/hash manifest in `licenses/dependencies.json`.
 | PySide6/Shiboken6, Qt 6 | LGPLv3/GPLv3 or commercial, depending on the module — https://www.qt.io/licensing/open-source-lgpl-obligations ; https://download.qt.io/official_releases/QtForPython/ |
 | yt-dlp | Unlicense; associated components retain their own licenses — https://github.com/yt-dlp/yt-dlp |
 | yt-dlp-ejs | See the license included in the package — https://github.com/yt-dlp/ejs |
-| FFmpeg and libraries in the BtbN GPL shared build | GPLv3 or later — https://ffmpeg.org/legal.html ; https://github.com/BtbN/FFmpeg-Builds |
+| FFmpeg and libraries in the FFmpeg-Builds GPL shared build | GPLv3 or later — https://ffmpeg.org/legal.html ; https://github.com/FFmpeg-Builds/FFmpeg-Builds |
 | QuickJS-ng 0.17.0 | MIT — https://github.com/quickjs-ng/quickjs/tree/v0.17.0 |
 | Requests, urllib3, certifi, Brotli, mutagen, PyCryptodome, websockets and other packages | Original notices collected in `licenses/python/manifest.json` |
 | PyInstaller bootloader | GPL with an exception permitting application distribution — https://pyinstaller.org/en/stable/license.html |
