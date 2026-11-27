@@ -138,6 +138,10 @@ class QueueManager(QObject):
         super().__init__(parent)
         self.db, self.settings = database, settings
         self.active = {}
+        self.pending_progress = {}
+        self.progress_timer = QTimer(self)
+        self.progress_timer.setSingleShot(True)
+        self.progress_timer.timeout.connect(self.flush_progress)
         self.enabled = False
         self.timer = QTimer(self)
         self.timer.setInterval(500)
@@ -167,10 +171,19 @@ class QueueManager(QObject):
 
     def on_progress(self, identifier, data):
         allowed = {"status", "progress", "downloaded", "total", "speed", "eta", "estimated"}
-        self.db.update(identifier, **{key: value for key, value in data.items() if key in allowed})
+        self.pending_progress.setdefault(identifier, {}).update(
+            {key: value for key, value in data.items() if key in allowed}
+        )
+        if not self.progress_timer.isActive():
+            self.progress_timer.start(150)
+
+    def flush_progress(self):
+        self.db.update_progress(self.pending_progress)
+        self.pending_progress.clear()
         self.changed.emit()
 
     def on_result(self, identifier, data):
+        self.pending_progress.pop(identifier, None)
         self.db.update(
             identifier,
             status="completed",
@@ -183,6 +196,7 @@ class QueueManager(QObject):
         self.notification.emit("download_completed")
 
     def on_error(self, identifier, data):
+        self.pending_progress.pop(identifier, None)
         self.db.update(
             identifier,
             status="cancelled" if data["code"] == "cancelled" else "failed",
@@ -218,3 +232,120 @@ class QueueManager(QObject):
         for task in list(self.active.values()):
             task.cancel()
             task.process.waitForFinished(5000)
+
+
+class MediaSession(QObject):
+    """Single foreground job, reusable process. Raw extractor results stay in its RAM."""
+
+    progress = Signal(dict)
+    result = Signal(dict)
+    error = Signal(dict)
+    finished = Signal()
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        import secrets
+
+        from PySide6.QtCore import QProcessEnvironment
+        from PySide6.QtNetwork import QHostAddress, QTcpServer
+
+        self.server = QTcpServer(self)
+        if not self.server.listen(QHostAddress.SpecialAddress.LocalHost, 0):
+            raise OSError("session_start")
+        self.key = secrets.token_hex(32)
+        self.server.newConnection.connect(self.accept)
+        self.process = QProcess(self)
+        environment = QProcessEnvironment.systemEnvironment()
+        environment.insert("YTDLPG_SESSION_KEY", self.key)
+        self.process.setProcessEnvironment(environment)
+        self.process.finished.connect(self.lost)
+        self.process.errorOccurred.connect(self.process_error)
+        self.channel = None
+        self.pending = None
+        self.cancelled = False
+        self.calls = 0
+        self.action = ""
+
+    def accept(self):
+        sock = self.server.nextPendingConnection()
+        sock.readyRead.connect(lambda: self.read(sock))
+        self.read(sock)
+
+    def read(self, sock):
+        while sock.canReadLine():
+            try:
+                event = json.loads(bytes(sock.readLine()))
+                if not isinstance(event, dict):
+                    raise ValueError()
+            except (ValueError, UnicodeError):
+                sock.abort()
+                return
+            if sock is not self.channel:
+                if event.get("kind") != "hello" or event.get("data") != self.key or self.channel:
+                    sock.abort()
+                    return
+                self.channel = sock
+                self.send_pending()
+                continue
+            if self.pending is None:
+                continue
+            kind = event.get("kind")
+            if kind == "progress":
+                self.progress.emit(event["data"])
+            elif kind in {"error", "result"}:
+                self.pending = None
+                getattr(self, kind).emit(event["data"])
+                self.finished.emit()
+
+    def start_job(self, action, payload):
+        self.pending = {"action": action, "payload": payload}
+        self.cancelled = False
+        self.action = action
+        self.calls += 1
+        if self.channel:
+            self.send_pending()
+        else:
+            args = ["--session", str(self.server.serverPort())]
+            self.process.start(
+                sys.executable,
+                args if getattr(sys, "frozen", False) else ["-m", "ytdlp_g.main", *args],
+            )
+
+    def send_pending(self):
+        if self.pending:
+            self.channel.write(json.dumps(self.pending).encode() + b"\n")
+            self.channel.flush()
+
+    def process_error(self, error):
+        if error == QProcess.ProcessError.FailedToStart:
+            self.lost()
+
+    def lost(self, *args):
+        if self.channel:
+            self.channel.deleteLater()
+            self.channel = None
+        if self.pending is not None:
+            self.pending = None
+            self.error.emit({"code": "cancelled" if self.cancelled else "operation_failed"})
+            self.finished.emit()
+
+    def cancel(self):
+        self.cancelled = True
+        pid = self.process.processId()
+        if pid:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True,
+                    **hidden_process(),
+                )
+            else:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    self.process.kill()
+
+    def shutdown(self):
+        self.cancel()
+        self.process.waitForFinished(3000)
+        self.server.close()

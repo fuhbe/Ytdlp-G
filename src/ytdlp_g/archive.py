@@ -34,7 +34,9 @@ def create_zip(
     common = Path(__import__("os").path.commonpath([str(p.parent) for p in sources]))
     used, records = set(), []
     written = 0
-    with tempfile.TemporaryDirectory(dir=target.parent, prefix=".ytdlpg-zip-") as temp:
+    with tempfile.TemporaryDirectory(
+        dir=target.parent, prefix=".ytdlpg-zip-", ignore_cleanup_errors=True
+    ) as temp:
         temporary = Path(temp) / "archive.zip"
         method = zipfile.ZIP_STORED if not compression else zipfile.ZIP_DEFLATED
         with zipfile.ZipFile(
@@ -42,7 +44,11 @@ def create_zip(
         ) as archive:
             for source in sources:
                 relative = source.relative_to(common) if subfolders else Path(source.name)
-                parts = [safe_name(part) for part in relative.parts]
+                parts = [safe_name(part) for part in relative.parts[:-1]] + [
+                    safe_name(relative.stem, 90) + "." + safe_name(relative.suffix[1:], 12)
+                    if relative.suffix
+                    else safe_name(relative.name)
+                ]
                 name = "/".join(parts)
                 counter = 0
                 while name.casefold() in used:
@@ -79,12 +85,13 @@ def create_zip(
                     raise ValueError("zip_integrity")
         if cancelled():
             raise Cancelled()
-        result = publish(temporary, target)
+        result = publish(temporary, target, immutable=True)
         # Publish copies bytes; verify the actual destination as well.
         try:
-            with zipfile.ZipFile(result) as archive:
-                if archive.testzip() is not None:
-                    raise ValueError("zip_integrity")
+            if not temporary.samefile(result):
+                with zipfile.ZipFile(result) as archive:
+                    if archive.testzip() is not None:
+                        raise ValueError("zip_integrity")
         except BaseException:
             result.unlink(missing_ok=True)
             raise

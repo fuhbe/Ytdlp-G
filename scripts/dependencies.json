@@ -10,5 +10,11 @@
     "sha256": "2aeabf0092c3262d6b2609824418f7dd7ed1f1df939f73b2b15645230cac0d77",
     "source": "https://github.com/quickjs-ng/quickjs/tree/v0.17.0",
     "license": "MIT; see QuickJS-LICENSE.txt"
+  },
+  "aria2": {
+    "url": "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
+    "sha256": "67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288",
+    "source": "https://github.com/aria2/aria2/tree/release-1.37.0",
+    "license": "GPL-2.0-or-later; separate executable; upstream notices shipped under licenses/aria2"
   }
 }

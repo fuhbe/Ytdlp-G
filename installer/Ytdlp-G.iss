@@ -1,12 +1,12 @@
 #define AppName "Ytdlp-G"
-#define AppVersion "1.3.0"
+#define AppVersion "1.4.0-beta.3"
 [Setup]
-AppId={{916F5287-2406-4128-AE7C-23BB827B38CE}
+AppId={{D6B67919-F420-4550-B954-474B95E4A72A}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Ytdlp-G contributors
-DefaultDirName={localappdata}\Programs\Ytdlp-G
-DefaultGroupName=Ytdlp-G
+DefaultDirName={localappdata}\Programs\Ytdlp-G Beta
+DefaultGroupName=Ytdlp-G Beta
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -28,8 +28,8 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Files]
 Source: "..\dist\Ytdlp-G\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "portable.flag,data\*"
 [Icons]
-Name: "{autoprograms}\Ytdlp-G"; Filename: "{app}\Ytdlp-G.exe"
-Name: "{autodesktop}\Ytdlp-G"; Filename: "{app}\Ytdlp-G.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Ytdlp-G Beta"; Filename: "{app}\Ytdlp-G.exe"
+Name: "{autodesktop}\Ytdlp-G Beta"; Filename: "{app}\Ytdlp-G.exe"; Tasks: desktopicon
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 [Run]

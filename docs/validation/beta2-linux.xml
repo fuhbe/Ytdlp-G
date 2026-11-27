@@ -1,0 +1,137 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites name="pytest tests">
+  <testsuite name="pytest" errors="0" failures="0" skipped="3" tests="126" time="56.809" timestamp="2026-11-26T12:30:05.429574-05:00">
+    <testcase classname="tests.test_beta2" name="test_rates_are_individually_selectable" time="0.001" />
+    <testcase classname="tests.test_beta2" name="test_order_partial_retry_and_limits[10]" time="0.023" />
+    <testcase classname="tests.test_beta2" name="test_order_partial_retry_and_limits[50]" time="0.069" />
+    <testcase classname="tests.test_beta2" name="test_order_partial_retry_and_limits[100]" time="0.137" />
+    <testcase classname="tests.test_beta2" name="test_playlist_cap_reports_lower_choice" time="0.001" />
+    <testcase classname="tests.test_beta2" name="test_zip_retry_offline" time="1.466" />
+    <testcase classname="tests.test_beta2" name="test_diagnostics_only_emit_known_fields" time="0.001" />
+    <testcase classname="tests.test_beta2" name="test_corrupt_cache_uses_conventional_extraction" time="0.938" />
+    <testcase classname="tests.test_beta2" name="test_cancel_is_not_an_item_failure" time="0.003" />
+    <testcase classname="tests.test_beta2" name="test_delivered_geometry_timestamps_and_audio[720-24]" time="0.909" />
+    <testcase classname="tests.test_beta2" name="test_delivered_geometry_timestamps_and_audio[1080-60000/1001]" time="0.920" />
+    <testcase classname="tests.test_beta2" name="test_delivered_geometry_timestamps_and_audio[1440-60]" time="1.007" />
+    <testcase classname="tests.test_beta2" name="test_delivered_geometry_timestamps_and_audio[2160-60]" time="1.821" />
+    <testcase classname="tests.test_beta2" name="test_vfr_hdr_copy_preserves_pts" time="1.020" />
+    <testcase classname="tests.test_beta2" name="test_cleanup_failure_does_not_invalidate_output" time="0.690" />
+    <testcase classname="tests.test_beta2" name="test_encoder_failure_reuses_local_source" time="0.481" />
+    <testcase classname="tests.test_beta2" name="test_external_downloader_failure_retries_native" time="0.837" />
+    <testcase classname="tests.test_beta2" name="test_long_unicode_zip_including_suffix" time="0.007" />
+    <testcase classname="tests.test_beta2" name="test_hundred_real_mp3_entries_without_analysis" time="16.110" />
+    <testcase classname="tests.test_core" name="test_translation_parity_fallback_and_format_placeholders" time="0.002" />
+    <testcase classname="tests.test_core" name="test_reject_invalid_urls[file:///etc/passwd]" time="0.001" />
+    <testcase classname="tests.test_core" name="test_reject_invalid_urls[ftp://server]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_reject_invalid_urls[javascript:alert(1)]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_reject_invalid_urls[https://user:password@example.com]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_reject_invalid_urls[https://]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_reject_invalid_urls[https://example.com:bad]" time="0.001" />
+    <testcase classname="tests.test_core" name="test_reject_invalid_urls[https://example.com/\nsecret]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_url_normalization_keeps_media_query" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[CON]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[aux.txt]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[LPT1.mp4]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[../title]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[&lt;bad&gt;:file?*]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[...]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[\xe9 m\xfasica  ]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_windows_safe_names[COM2]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_concurrent_publish_never_overwrites" time="0.024" />
+    <testcase classname="tests.test_core" name="test_profiles_settings_persist_and_reject_invalid_restore" time="0.005" />
+    <testcase classname="tests.test_core" name="test_queue_history_migration_and_restart_recovery" time="0.019" />
+    <testcase classname="tests.test_core" name="test_schedule_claim_is_once_and_repeat_catches_up" time="0.013" />
+    <testcase classname="tests.test_core" name="test_zip_deduplicates_checks_contents_and_preserves_sources" time="0.003" />
+    <testcase classname="tests.test_core" name="test_zip_cancel_and_publication_failure_keep_originals" time="0.031" />
+    <testcase classname="tests.test_core" name="test_zip_does_not_delete_source_modified_during_creation" time="0.002" />
+    <testcase classname="tests.test_core" name="test_zip_rejects_self_and_symlinks" time="0.001" />
+    <testcase classname="tests.test_core" name="test_sources_use_no_shell_true_or_untranslated_keys" time="0.005" />
+    <testcase classname="tests.test_core" name="test_profile_export_roundtrip_is_real" time="0.001" />
+    <testcase classname="tests.test_core" name="test_malformed_profile_input_is_rejected[data0]" time="0.001" />
+    <testcase classname="tests.test_core" name="test_malformed_profile_input_is_rejected[wrong]" time="0.001" />
+    <testcase classname="tests.test_core" name="test_malformed_profile_input_is_rejected[data2]" time="0.001" />
+    <testcase classname="tests.test_core" name="test_malformed_profile_input_is_rejected[data3]" time="0.001" />
+    <testcase classname="tests.test_core" name="test_malformed_profile_input_is_rejected[data4]" time="0.000" />
+    <testcase classname="tests.test_core" name="test_credentials_in_url_are_rejected_before_persistence" time="0.009" />
+    <testcase classname="tests.test_core" name="test_v1_migration_preserves_jobs_and_resumes_batch_claims" time="0.025" />
+    <testcase classname="tests.test_core" name="test_cleanup_only_owned_staging_and_keeps_final_files" time="0.002" />
+    <testcase classname="tests.test_engine" name="test_atomic_pair_update_and_daily_cadence" time="0.017" />
+    <testcase classname="tests.test_engine" name="test_corrupt_download_keeps_active_pair" time="0.009" />
+    <testcase classname="tests.test_engine" name="test_rejects_archive_traversal[../escape.py]" time="0.002" />
+    <testcase classname="tests.test_engine" name="test_rejects_archive_traversal[/escape.py]" time="0.002" />
+    <testcase classname="tests.test_engine" name="test_rejects_archive_traversal[yt_dlp/../../escape.py]" time="0.002" />
+    <testcase classname="tests.test_engine" name="test_rejects_archive_traversal[yt_dlp\\escape.py]" time="0.002" />
+    <testcase classname="tests.test_engine" name="test_update_lock_and_incompatible_python" time="0.006" />
+    <testcase classname="tests.test_engine" name="test_cached_engine_activation_precedes_bundled_import" time="0.125" />
+    <testcase classname="tests.test_engine" name="test_failed_import_falls_back_to_bundled" time="0.350" />
+    <testcase classname="tests.test_lite" name="test_catalog_only_mp4_with_sound_and_mp3" time="0.000" />
+    <testcase classname="tests.test_lite" name="test_playlist_offers_individual_best_and_maximum_resolutions" time="0.000" />
+    <testcase classname="tests.test_lite" name="test_playlist_checks_every_item_and_counts_private_entries" time="0.004" />
+    <testcase classname="tests.test_lite" name="test_quality_disappearing_is_reported_without_fallback" time="0.004" />
+    <testcase classname="tests.test_lite" name="test_real_link_mp3_audio_and_mp4_zip_only" time="1.089" />
+    <testcase classname="tests.test_lite" name="test_zip_failure_preserves_downloaded_sources" time="0.715" />
+    <testcase classname="tests.test_lite" name="test_compact_gui_real_download_and_live_language" time="2.227" />
+    <testcase classname="tests.test_lite" name="test_real_embedded_playlist_with_two_entries[normal-video:best-.mp4]" time="0.801" />
+    <testcase classname="tests.test_lite" name="test_real_embedded_playlist_with_two_entries[zip-video:best-.mp4]" time="0.766" />
+    <testcase classname="tests.test_lite" name="test_real_embedded_playlist_with_two_entries[normal-audio:mp3:convert-.mp3]" time="0.761" />
+    <testcase classname="tests.test_lite" name="test_real_embedded_playlist_with_two_entries[zip-audio:mp3:convert-.mp3]" time="0.777" />
+    <testcase classname="tests.test_lite" name="test_mp3_conversion_requires_audio_and_excludes_drm" time="0.000" />
+    <testcase classname="tests.test_lite" name="test_mp3_is_common_across_different_native_codecs" time="0.000" />
+    <testcase classname="tests.test_lite" name="test_real_mp3_conversion_has_320kbps_audio_only" time="0.706" />
+    <testcase classname="tests.test_lite" name="test_existing_mp3_preserves_original_without_lossy_reencoding" time="0.724" />
+    <testcase classname="tests.test_lite" name="test_open_menus_stay_readable_with_dark_system_palette" time="0.096" />
+    <testcase classname="tests.test_lite" name="test_video_without_audio_is_not_offered" time="0.000" />
+    <testcase classname="tests.test_lite" name="test_webm_and_mixed_codec_playlists_offer_mp4_at_real_resolutions" time="0.000" />
+    <testcase classname="tests.test_lite" name="test_real_separate_webm_video_and_audio_become_mp4" time="0.960" />
+    <testcase classname="tests.test_media_download" name="test_time_parse[00:00:00-0]" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_time_parse[01:02:03.5-3723.5]" time="0.000" />
+    <testcase classname="tests.test_media_download" name="test_time_parse[00:00:10-10]" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_time_parse_rejects[nan]" time="0.000" />
+    <testcase classname="tests.test_media_download" name="test_time_parse_rejects[00:70:00]" time="0.000" />
+    <testcase classname="tests.test_media_download" name="test_time_parse_rejects[-1:00:00]" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_time_parse_rejects[0:0:nan]" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_time_parse_rejects[00:00:inf]" time="0.000" />
+    <testcase classname="tests.test_media_download" name="test_time_parse_rejects[1; rm -rf /]" time="0.004" />
+    <testcase classname="tests.test_media_download" name="test_time_parse_rejects[00:00:-1]" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_ffmpeg_paths_are_single_arguments_and_options_validated" time="0.005" />
+    <testcase classname="tests.test_media_download" name="test_conversion_mp3_remux_and_precise_cut" time="1.128" />
+    <testcase classname="tests.test_media_download" name="test_failed_remux_preserves_source_and_no_final_output" time="0.155" />
+    <testcase classname="tests.test_media_download" name="test_inspection_fixture_filters_headers_and_parses_formats" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_playlist_extraction_is_lazy_paged_and_skips_unavailable" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_real_local_http_inspection_video_download_and_zip" time="2.120" />
+    <testcase classname="tests.test_media_download" name="test_real_audio_extraction_local_http" time="0.568" />
+    <testcase classname="tests.test_media_download" name="test_format_options_and_errors" time="0.002" />
+    <testcase classname="tests.test_media_download" name="test_visual_naming_is_safe_template_not_user_code" time="0.001" />
+    <testcase classname="tests.test_media_download" name="test_destination_is_separate_from_filename_template" time="0.001" />
+    <testcase classname="tests.test_turbo" name="test_cache_deduplicates_and_detaches_results" time="0.102" />
+    <testcase classname="tests.test_turbo" name="test_cache_expiry" time="0.001" />
+    <testcase classname="tests.test_turbo" name="test_fragments_and_global_budget[eco-2]" time="0.000" />
+    <testcase classname="tests.test_turbo" name="test_fragments_and_global_budget[balanced-4]" time="0.001" />
+    <testcase classname="tests.test_turbo" name="test_fragments_and_global_budget[fast-8]" time="0.000" />
+    <testcase classname="tests.test_turbo" name="test_fragments_and_global_budget[turbo-16]" time="0.000" />
+    <testcase classname="tests.test_turbo" name="test_network_congestion_reduces_auto_budget" time="0.001" />
+    <testcase classname="tests.test_turbo" name="test_single_extraction_and_reuse" time="0.701" />
+    <testcase classname="tests.test_turbo" name="test_immutable_publication_handles_races" time="0.004" />
+    <testcase classname="tests.test_turbo" name="test_actual_hardware_encoder[h264_qsv]" time="0.668">
+      <skipped type="pytest.skip" message="h264_qsv: no functioning device/driver">/workspace/Ytdlp-G/tests/test_turbo.py:97: h264_qsv: no functioning device/driver</skipped>
+    </testcase>
+    <testcase classname="tests.test_turbo" name="test_actual_hardware_encoder[h264_nvenc]" time="0.667">
+      <skipped type="pytest.skip" message="h264_nvenc: no functioning device/driver">/workspace/Ytdlp-G/tests/test_turbo.py:97: h264_nvenc: no functioning device/driver</skipped>
+    </testcase>
+    <testcase classname="tests.test_turbo" name="test_actual_hardware_encoder[h264_amf]" time="0.083">
+      <skipped type="pytest.skip" message="h264_amf: no functioning device/driver">/workspace/Ytdlp-G/tests/test_turbo.py:97: h264_amf: no functioning device/driver</skipped>
+    </testcase>
+    <testcase classname="tests.test_turbo" name="test_cpu_always_available" time="0.001" />
+    <testcase classname="tests.test_turbo" name="test_bounded_large_playlist_order" time="0.041" />
+    <testcase classname="tests.test_turbo" name="test_expired_media_url_reextracts_once[403]" time="1.922" />
+    <testcase classname="tests.test_turbo" name="test_expired_media_url_reextracts_once[429]" time="2.921" />
+    <testcase classname="tests.test_turbo" name="test_native_cache_excludes_auth_material" time="0.040" />
+    <testcase classname="tests.test_ui" name="test_translation_signal_updates_existing_widget" time="0.002" />
+    <testcase classname="tests.test_ui" name="test_worker_result_arrives_on_gui_thread_without_stdout" time="0.594" />
+    <testcase classname="tests.test_ui" name="test_live_languages_keep_urls_and_options_and_navigation" time="0.145" />
+    <testcase classname="tests.test_ui" name="test_gui_download_pipeline_to_history" time="3.004" />
+    <testcase classname="tests.test_ui" name="test_cancel_worker_emits_cancelled_and_stops_process" time="0.014" />
+    <testcase classname="tests.test_ui" name="test_restart_recovers_grouped_playlist_zip" time="3.619" />
+    <testcase classname="tests.test_ui" name="test_smoke_test_exits_without_active_task_dialog" time="0.786" />
+  </testsuite>
+</testsuites>

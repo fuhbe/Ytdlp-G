@@ -28,3 +28,7 @@ A versão 1.3.0 é publicada após testes e verificações funcionais dos pacote
 
 [Código e guia completo em inglês](README.md) · [Reportar problema](https://github.com/fuhbe/Ytdlp-G/issues/new/choose).
 Código próprio: [MIT](LICENSE); [dependências com licenças próprias](THIRD_PARTY_NOTICES.md).
+
+## Beta 3 para projetores e TVs
+
+O perfil padrão exporta H.264 e AAC-LC estéreo. **Formato original** conserva codecs como AV1. **Aparelhos antigos** limita a saída a 720p30. Use **Converter vídeos existentes** para processar arquivos já baixados. [Perfis e teste no projetor](docs/turbo/beta3.md)

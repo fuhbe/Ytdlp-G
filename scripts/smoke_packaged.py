@@ -9,6 +9,8 @@ import functools
 import hashlib
 import json
 import os
+import secrets
+import socket
 import struct
 import subprocess
 import tempfile
@@ -100,6 +102,12 @@ def run_smoke(package, report):
         assert gui.returncode == 0, ("GUI smoke", gui.returncode)
         evidence["checks"].append("GUI + dependency worker")
 
+        classic = subprocess.run(
+            [str(executable), "--classic", "--smoke-test"], timeout=60, **process_options
+        )
+        assert classic.returncode == 0
+        evidence["checks"].append("classic GUI + dependency worker")
+
         fixture = root / "authorized sample.mp4"
         subprocess.run(
             [
@@ -174,8 +182,64 @@ def run_smoke(package, report):
         thread.start()
         try:
             url = f"http://127.0.0.1:{server.server_port}/authorized%20sample.mp4"
+            # Exercise the persistent frozen entry with no system helpers on PATH.
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                listener.settimeout(25)
+                token = secrets.token_hex(32)
+                opts = process_options | {"env": environment | {"YTDLPG_SESSION_KEY": token}}
+                opts.pop("capture_output", None)
+                opts.update(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                with subprocess.Popen(
+                    [str(executable), "--session", str(listener.getsockname()[1])], **opts
+                ) as child:
+                    try:
+                        channel, _ = listener.accept()
+                        with channel, channel.makefile("rwb") as pipe:
+                            channel.settimeout(40)
+                            assert json.loads(pipe.readline())["data"] == token
+
+                            def call(action, payload):
+                                pipe.write(
+                                    json.dumps(
+                                        {
+                                            "action": action,
+                                            "payload": payload
+                                            | {"performance": {"downloader": "aria2c"}},
+                                        }
+                                    ).encode()
+                                    + b"\n"
+                                )
+                                pipe.flush()
+                                while True:
+                                    msg = json.loads(pipe.readline())
+                                    assert msg["kind"] != "error", msg
+                                    if msg["kind"] == "result":
+                                        return msg["data"]
+
+                            catalog = call("lite_inspect", {"url": url})
+                            saved = call(
+                                "lite_download",
+                                dict(
+                                    analysis=catalog,
+                                    quality="video:best",
+                                    mode="normal",
+                                    destination=str(root / "persistent"),
+                                ),
+                            )
+                            assert Path(saved["files"][0]).is_file()
+                        assert child.wait(timeout=15) == 0
+                    finally:
+                        if child.poll() is None:
+                            child.kill()
+            evidence["checks"].append("persistent worker: inspect, download, shutdown")
+            subprocess.run(
+                [str(tools / "aria2c.exe"), "--version"], check=True, timeout=10, **process_options
+            )
+            evidence["checks"].append("bundled aria2c")
             lite = worker("lite_inspect", {"url": url})
-            assert {c["key"] for c in lite["choices"]} >= {"video:mp4:90", "audio:mp3:convert"}
+            assert {c["key"] for c in lite["choices"]} >= {"video:best", "audio:mp3:convert"}
             native = worker(
                 "lite_download",
                 {
@@ -192,7 +256,7 @@ def run_smoke(package, report):
                 "lite_download",
                 {
                     "analysis": lite,
-                    "quality": "video:mp4:90",
+                    "quality": "video:best",
                     "mode": "zip",
                     "destination": str(root / "lite zip"),
                 },
@@ -209,6 +273,40 @@ def run_smoke(package, report):
             assert (
                 next(s for s in video_info["streams"] if s["codec_type"] == "video")["height"] == 90
             )
+            v = next(s for s in video_info["streams"] if s["codec_type"] == "video")
+            a = next(s for s in video_info["streams"] if s["codec_type"] == "audio")
+            assert (v["codec_name"], v["codec_tag_string"], v["pix_fmt"]) == (
+                "h264",
+                "avc1",
+                "yuv420p",
+            )
+            assert a["profile"] == "LC" and a["channels"] == 2
+            offline = worker(
+                "offline_batch",
+                {
+                    "inputs": [str(fixture)],
+                    "destination": str(root / "Convertidos"),
+                    "profile": "compatible",
+                },
+            )
+            assert len(offline["files"]) == 1 and not offline["failures"]
+            subprocess.run(
+                [
+                    str(tools / "ffmpeg.exe"),
+                    "-v",
+                    "error",
+                    "-xerror",
+                    "-i",
+                    offline["files"][0],
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                check=True,
+                timeout=30,
+                **process_options,
+            )
+            evidence["checks"].append("decoded offline H.264/AAC output")
             assert list((root / "lite zip").rglob("*.mp4")) == []
             (root / "playlist.html").write_text(
                 '<html><head><title>Two videos</title></head><body><video src="authorized%20sample.mp4" controls></video><video src="authorized%20sample.mp4?second" controls></video></body></html>',
@@ -221,7 +319,7 @@ def run_smoke(package, report):
             playlist_zip = worker(
                 "lite_download",
                 {
-                    "analysis": playlist,
+                    "url": f"http://127.0.0.1:{server.server_port}/playlist.html",
                     "quality": "audio:mp3:convert",
                     "mode": "zip",
                     "destination": str(root / "playlist zip"),
