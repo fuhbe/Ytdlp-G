@@ -567,9 +567,14 @@ def download_plan(payload, analysis, emit):
     from .paths import cleanup_stage
 
     key = payload["quality"]
-    if key not in {BEST, MP3} and key not in {
-        choice["key"] for choice in analysis.get("choices", [])
-    }:
+    cli_limit = (
+        payload.get("resolution_limit") and key == f"video:max:{payload['resolution_limit']}"
+    )
+    if (
+        not cli_limit
+        and key not in {BEST, MP3}
+        and key not in {choice["key"] for choice in analysis.get("choices", [])}
+    ):
         raise ValueError("format_unavailable")
     mode = payload["mode"]
     if mode not in {"normal", "zip"}:
@@ -675,7 +680,16 @@ def download_plan(payload, analysis, emit):
                         "playlist_title": analysis["title"] if analysis["playlist"] else "",
                         "playlist_index": i if analysis["playlist"] else None,
                     },
-                    lambda data: report(item, data),
+                    lambda data, selected=selected: report(
+                        item,
+                        {
+                            "name": item["title"],
+                            "height": selected.get("height"),
+                            "fps": selected.get("fps"),
+                            "codec": selected.get("codec"),
+                        }
+                        | data,
+                    ),
                     info_cache=fresh,
                     recovery=bool(attempt),
                     aria=external,
