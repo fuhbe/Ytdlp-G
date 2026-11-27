@@ -17,6 +17,14 @@ A disponibilidade de 4K, 60 FPS e HDR depende da fonte. A reprodução depende d
 3. Se o aparelho ainda recusar o arquivo, repita o teste com **Aparelhos antigos**. Para converter o restante, selecione a pasta, marque subpastas se necessário e escolha a pasta de saída. Arquivos já compatíveis podem ser ignorados ou copiados.
 4. Para novos downloads, cole o link, escolha **Vídeo MP4**, a qualidade, o perfil e a pasta. A seleção de áudio MP3 mantém o fluxo anterior.
 
+## Download e seleção de qualidade
+
+A tela principal aceita um link de vídeo ou uma playlist. Para usar a interface clássica com vários links avulsos, abra `Ytdlp-G.exe --classic` e cole um link por linha. A opção **Melhor qualidade disponível** acompanha a resolução e o FPS disponíveis em cada item da playlist. O motor pode baixar fragmentos em paralelo quando a fonte oferece esse tipo de download.
+
+Ao mostrar **Verificando disponibilidade**, o aplicativo ainda está consultando o site para obter os formatos e confirmar o áudio. A barra indica essa atividade enquanto não há bytes para contar. A análise pode demorar quando a rede ou o serviço demora a responder. O aplicativo permite verificar os detalhes de uma falha e repetir só os itens afetados.
+
+O modo MP3 preserva uma faixa MP3 disponível. Quando a fonte entrega outro formato, o aplicativo converte a melhor faixa de áudio disponível para MP3 a 320 kbps. A atualização do motor de download continua disponível em segundo plano.
+
 ## Validação e dependências
 
 As verificações automatizadas usam FFprobe e decodificação real com FFmpeg. O projetor físico e a Intel Iris Xe do usuário precisam de teste pessoal. O ZIP de validação inclui os relatórios Windows e Linux, as verificações de instalação e modo portátil e o resultado da tentativa de acesso público ao YouTube.
