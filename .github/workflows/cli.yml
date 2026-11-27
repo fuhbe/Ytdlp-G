@@ -35,7 +35,7 @@ jobs:
           Copy-Item dist/Ytdlp-G-CLI.exe artifacts/
           Copy-Item docs/CLI.md dist/cli-portable/
           Compress-Archive dist/cli-portable/* artifacts/Ytdlp-G-CLI-portable.zip
-          Copy-Item docs/CLI.md,build/test-results.xml artifacts/
+          Copy-Item docs/CLI.md,docs/cli-comparison.md,build/test-results.xml artifacts/
           git archive --format=zip -o artifacts/Ytdlp-G-CLI-source.zip HEAD
       - uses: actions/upload-artifact@v4
         with:

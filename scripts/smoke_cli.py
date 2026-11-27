@@ -43,6 +43,9 @@ with tempfile.TemporaryDirectory() as d:
     root = Path(d)
     env = os.environ.copy()
     env.update(YTDLPG_CLI_HOME=str(root / "db"), PYTHONIOENCODING="utf-8")
+    env["PATH"] = (
+        os.path.join(os.environ["SystemRoot"], "System32") + os.pathsep + os.environ["SystemRoot"]
+    )
     tools = portable.parent / "_internal" / "bin"
     ffmpeg = tools / "ffmpeg.exe"
     source = root / "sample.mp4"
@@ -77,6 +80,27 @@ with tempfile.TemporaryDirectory() as d:
         run("single doctor", [single, "doctor", "--json"], expect_json=True)["status"] == "complete"
     )
     health = run("portable doctor", [portable, "doctor", "--json"], expect_json=True)
+    assert all(
+        Path(tool).is_relative_to(portable.parent) for tool in health["dependencies"].values()
+    )
+    assert "libx264" in health["encoders"]
+    env["PATH"] = str(portable.parent) + os.pathsep + env["PATH"]
+    for shell, command in (
+        ("CMD", ["cmd.exe", "/d", "/c", "ytdlp-g.exe --version"]),
+        (
+            "PowerShell",
+            [
+                str(
+                    Path(os.environ["SystemRoot"])
+                    / "System32/WindowsPowerShell/v1.0/powershell.exe"
+                ),
+                "-NoProfile",
+                "-Command",
+                f"& '{portable}' --version",
+            ],
+        ),
+    ):
+        assert "0.1.0-beta.1" in run(shell, command)
     for language in ("pt-BR", "en", "es"):
         run("language " + language, [portable, "config", "--language", language])
         assert "YTDLP-G CLI" in run("portable menu " + language, [portable], "0\n")

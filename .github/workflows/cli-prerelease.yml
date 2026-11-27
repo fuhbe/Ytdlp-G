@@ -1,0 +1,24 @@
+name: Publish validated CLI prerelease
+on:
+  push:
+    tags: ['cli-v0.1.0-beta.1']
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify exact build and publish its assets
+        run: |
+          set -eu
+          sha=$(git rev-parse HEAD)
+          run=$(gh run list --workflow cli.yml --branch feat/windows-cli-beta1 --commit "$sha" --status success --json databaseId --jq '.[0].databaseId')
+          test -n "$run"
+          gh run download "$run" -n cli-verified -D out
+          (cd out && sha256sum -c SHA256SUMS.txt)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --draft --prerelease --latest=false --title 'Ytdlp-G CLI 0.1.0 Beta 1 — Windows Edition' --notes-file docs/CLI.md out/*
+          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease --latest=false

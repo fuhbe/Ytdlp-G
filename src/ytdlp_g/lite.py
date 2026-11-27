@@ -410,10 +410,11 @@ def _inspect(url, emit, profile):
     return plan
 
 
-def use_aria(info, selected):
+def use_aria(info, selected, preference=None):
     from urllib.request import Request, urlopen
 
-    if turbo.prefs["downloader"] == "native":
+    preference = preference or turbo.prefs["downloader"]
+    if preference == "native":
         return False
     try:
         executable("aria2c")
@@ -424,7 +425,7 @@ def use_aria(info, selected):
     candidates = [f for f in formats if f.get("format_id") in ids] if ids else formats
     if not candidates or any(f.get("protocol") not in {"http", "https"} for f in candidates):
         return False
-    if turbo.prefs["downloader"] == "aria2c":
+    if preference == "aria2c":
         return True
     fmt = candidates[-1]
     if (fmt.get("filesize") or fmt.get("filesize_approx") or 0) < 16 * 1024**2:
@@ -608,6 +609,7 @@ def download_plan(payload, analysis, emit):
                 | counts
                 | {
                     "aggregate": True,
+                    "item_percent": event.get("progress"),
                     "phase": event.get("phase") or event.get("status", "running"),
                     "progress": min(1, sum(fractions.values()) / total)
                     * (95 if mode == "zip" else 99)
@@ -661,7 +663,11 @@ def download_plan(payload, analysis, emit):
                     metadata=False,
                     organization="playlist" if analysis["playlist"] else "flat",
                 ).to_dict()
-                external = not attempt and use_aria(fresh, selected)
+                external = not attempt and (
+                    use_aria(fresh, selected, payload["downloader"])
+                    if "downloader" in payload
+                    else use_aria(fresh, selected)
+                )
                 # Distinct downloader/format staging also avoids Beta 1's 40-character ID truncation.
                 identifier = identity(
                     stamp, selected["video_stream"], selected["audio_stream"], external, attempt

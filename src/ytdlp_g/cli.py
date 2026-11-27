@@ -79,7 +79,15 @@ def progress_renderer(quiet):
     def emit(event):
         if quiet:
             return
-        item = event.get("current") or event.get("index") or ""
+        item = "/".join(
+            str(v)
+            for v in (
+                event.get("job"),
+                event.get("current") or event.get("index"),
+                event.get("total_items"),
+            )
+            if v
+        )
         stage = event.get("phase") or event.get("status", "")
         key = (item, stage)
         now = time.monotonic()
@@ -87,16 +95,27 @@ def progress_renderer(quiet):
             return
         last[key] = now
         fields = [str(x) for x in (item, event.get("name"), stage, event.get("encoder")) if x]
-        for key_name in ("height", "fps", "codec", "downloaded", "total", "eta"):
+        for key_name in (
+            "height",
+            "fps",
+            "codec",
+            "target_codec",
+            "downloaded",
+            "total",
+            "eta",
+            "encoding_speed",
+        ):
             if event.get(key_name):
                 fields.append(f"{key_name}={event[key_name]}")
         if event.get("speed"):
             fields.append(f"{event['speed'] / 1048576:.2f} MiB/s")
         if event.get("total") and event.get("downloaded"):
             fields.append(f"{100 * event['downloaded'] / event['total']:.1f}%")
-        elif event.get("encoder") and event.get("progress"):
-            fields.append(f"{event['progress']:.1f}%")
-        print(" · ".join(fields), file=sys.stderr, flush=True)
+        elif event.get("encoder") and event.get("item_percent", event.get("progress")):
+            fields.append(f"{event.get('item_percent', event['progress']):.1f}%")
+        print(
+            "".join(c for c in " · ".join(fields) if c.isprintable()), file=sys.stderr, flush=True
+        )
 
     return emit
 
@@ -115,7 +134,11 @@ def execute(args, db, root, prefs, emit):
     if cmd == "history" or (cmd == "queue" and args.action == "list"):
         condition = " WHERE result IS NOT NULL" if cmd == "history" else ""
         return [
-            dict(r)
+            {
+                "id": r["id"],
+                "state": r["state"],
+                "files": json.loads(r["result"] or "{}").get("files", []),
+            }
             for r in db.execute("SELECT id,state,result FROM jobs" + condition + " ORDER BY id")
         ]
     if cmd == "queue" and args.action not in ("run", "list"):
@@ -190,77 +213,113 @@ def execute(args, db, root, prefs, emit):
             ids.append(cli_queue.enqueue(db, payload))
     elif args.id is not None:
         ids = [args.id]
-    results = []
+    from concurrent.futures import ThreadPoolExecutor
+
     with cli_queue.runner(root, db):
-        rows = db.execute("SELECT * FROM jobs ORDER BY id").fetchall()
-        for row in rows:
-            i = row["id"]
-            if ids and i not in ids:
-                continue
-            if not db.execute(
-                "UPDATE jobs SET state='running' WHERE id=? AND state='pending'", (i,)
-            ).rowcount:
-                results.append(
-                    {
-                        "id": i,
-                        "state": db.execute("SELECT state FROM jobs WHERE id=?", (i,)).fetchone()[
-                            0
-                        ],
-                    }
-                )
-                continue
-            payload = json.loads(row["request"])
-            turbo.configure(prefs | {"downloader": payload.pop("downloader")})
-            from .archive import Cancelled
-
-            last_check = [0.0]
-            guard = threading.Lock()
-
-            def monitored(event, guard=guard, i=i, last_check=last_check):  # noqa: B023
-                with guard:
-                    if time.monotonic() - last_check[0] > 0.25:
-                        last_check[0] = time.monotonic()
-                        current = control_db.execute(
-                            "SELECT state FROM jobs WHERE id=?", (i,)
-                        ).fetchone()[0]
-                        if current != "running":
-                            raise Cancelled()
-                emit(event)
-
+        rows = db.execute("SELECT id, state FROM jobs ORDER BY id").fetchall()
+        requested = set(ids)
+        jobs = [
+            r["id"]
+            for r in rows
+            if (r["id"] in requested if requested else r["state"] == "pending")
+        ]
+        with ThreadPoolExecutor(max_workers=prefs["downloads"]) as pool:
             try:
-                with closing(
-                    sqlite3.connect(root / "queue.sqlite", check_same_thread=False)
-                ) as control_db:
-                    result = lite.download_lite(payload, monitored)
-                state = result["status"]
+                results = list(pool.map(lambda job: run_job(root, job, emit), jobs))
             except KeyboardInterrupt:
-                db.execute("UPDATE jobs SET state='paused' WHERE id=?", (i,))
+                for job in jobs:
+                    cli_queue.control(db, "pause", job)
                 raise
-            except Exception as exc:
-                from .diagnostics import diagnostic
-
-                result = {"failures": [diagnostic("download", exc)]}
-                state = "failed"
-            db.execute(
-                "UPDATE jobs SET state=?,result=? WHERE id=? AND state='running'",
-                (state, json.dumps(result), i),
-            )
-            results.append(
-                {
-                    "id": i,
-                    "state": state,
-                    "files": result.get("files", []),
-                    "failures": result.get("failures", []),
-                }
-            )
     return {
         "jobs": results,
         "status": "complete" if all(r["state"] == "complete" for r in results) else "partial",
     }
 
 
+def run_job(root, job, emit):
+    from . import lite
+    from .archive import Cancelled
+    from .diagnostics import diagnostic
+
+    with closing(cli_queue.connect(root)) as db:
+        row = db.execute("SELECT * FROM jobs WHERE id=?", (job,)).fetchone()
+        previous = json.loads(row["result"] or "{}")
+        if row["state"] == "complete":
+            if cli_queue.outputs_current(previous):
+                return {"id": job, "state": "complete", "files": previous["files"]}
+            db.execute("UPDATE jobs SET state='pending' WHERE id=? AND state='complete'", (job,))
+        claimed = db.execute(
+            "UPDATE jobs SET state='running' WHERE id=? AND state='pending'", (job,)
+        ).rowcount
+        if not claimed:
+            return {
+                "id": job,
+                "state": db.execute("SELECT state FROM jobs WHERE id=?", (job,)).fetchone()[0],
+            }
+        guard = threading.Lock()
+        last_check = 0.0
+        try:
+            with closing(
+                sqlite3.connect(root / "queue.sqlite", check_same_thread=False)
+            ) as control:
+
+                def monitored(event):
+                    nonlocal last_check
+                    with guard:
+                        if time.monotonic() - last_check > 0.25:
+                            state = control.execute(
+                                "SELECT state FROM jobs WHERE id=?", (job,)
+                            ).fetchone()[0]
+                            if state != "running":
+                                raise Cancelled()
+                            last_check = time.monotonic()
+                    emit(event | {"job": job})
+
+                result = lite.download_lite(json.loads(row["request"]), monitored)
+            state = result["status"]
+            if state == "complete":
+                result["stamps"] = cli_queue.output_stamps(result["files"])
+        except Exception as exc:
+            result = {"failures": [diagnostic("download", exc)]}
+            state = "failed"
+        db.execute(
+            "UPDATE jobs SET state=?,result=? WHERE id=? AND state='running'",
+            (state, json.dumps(result), job),
+        )
+        actual = db.execute("SELECT state FROM jobs WHERE id=?", (job,)).fetchone()[0]
+        return {
+            "id": job,
+            "state": actual,
+            "files": result.get("files", []),
+            "failures": result.get("failures", []) if actual == state else [],
+        }
+
+
 def menu(language):
     labels = MENUS[LANGS.index(language)].split("|")
+    prompts = (
+        (
+            "Pasta de destino",
+            "Arquivo ou pasta",
+            "Um link por linha. Enter em branco inicia o download.",
+            "Listar|Pausar|Retomar|Cancelar|Repetir falhas",
+            "Número do pedido (Enter = todos)",
+        ),
+        (
+            "Destination folder",
+            "File or folder",
+            "One link per line. Press Enter on an empty line to start.",
+            "List|Pause|Resume|Cancel|Retry failures",
+            "Job number (Enter = all)",
+        ),
+        (
+            "Carpeta de destino",
+            "Archivo o carpeta",
+            "Un enlace por línea. Pulse Enter en una línea vacía para iniciar.",
+            "Listar|Pausar|Reanudar|Cancelar|Reintentar fallos",
+            "Número del pedido (Enter = todos)",
+        ),
+    )[LANGS.index(language)]
     print("\nYTDLP-G CLI")
     for i, label in enumerate(labels[:-1], 1):
         print(f"{i:2}. {label}")
@@ -270,6 +329,8 @@ def menu(language):
         return None
     if choice in ("1", "2", "3", "4"):
         urls = []
+        if choice == "4":
+            print(prompts[2])
         while True:
             url = input("URL > ").strip()
             if not url:
@@ -291,25 +352,23 @@ def menu(language):
             quality = input("720 / 1080 / 2160 [auto] > ").strip()
             if quality:
                 args += ["--quality", quality]
-        destination = input(
-            labels[7] + " · 📁 [Enter = default] > "
-            if sys.stdout.encoding and sys.stdout.encoding.lower() == "utf-8"
-            else "Folder [Enter = default] > "
-        ).strip()
+        destination = input(prompts[0] + " [Enter] > ").strip().strip('"')
         return args + (["-o", destination] if destination else [])
     if choice == "5":
-        return [
-            "convert",
-            input("📁 > " if sys.stdout.encoding == "utf-8" else "Path > ").strip().strip('"'),
-        ]
+        return ["convert", input(prompts[1] + " > ").strip().strip('"')]
     if choice == "6":
-        return [
-            "queue",
-            input("list / pause / resume / cancel / retry [list] > ").strip() or "list",
-        ]
+        actions = ["list", "pause", "resume", "cancel", "retry"]
+        for i, label in enumerate(prompts[3].split("|"), 1):
+            print(i, label)
+        number = input("[1] > ").strip() or "1"
+        if number not in ("1", "2", "3", "4", "5"):
+            raise ValueError("invalid_options")
+        action = actions[int(number) - 1]
+        job = input(prompts[4] + " > ").strip() if action != "list" else ""
+        return ["queue", action] + ([job] if job else [])
     if choice == "8":
         lang = input("pt-BR / en / es > ").strip()
-        dest = input("Folder > ").strip()
+        dest = input(prompts[0] + " > ").strip()
         return (
             ["config"]
             + (["--language", lang] if lang else [])

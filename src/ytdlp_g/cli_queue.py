@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 
 def connect(root):
@@ -45,7 +46,7 @@ def control(db, action, job=None):
         "pause": (("pending", "running"), "paused"),
         "resume": (("paused",), "pending"),
         "cancel": (("pending", "paused", "running"), "cancelled"),
-        "retry": (("failed", "partial", "cancelled"), "pending"),
+        "retry": (("failed", "partial", "zip_failed", "cancelled"), "pending"),
     }[action]
     marks = ",".join("?" for _ in states)
     sql = f"UPDATE jobs SET state=? WHERE state IN ({marks})"
@@ -54,3 +55,18 @@ def control(db, action, job=None):
         sql += " AND id=?"
         args.append(job)
     return db.execute(sql, args).rowcount
+
+
+def output_stamps(files):
+    stamps = []
+    for name in files:
+        stat = Path(name).stat()
+        stamps.append([stat.st_size, stat.st_mtime_ns])
+    return stamps
+
+
+def outputs_current(result):
+    try:
+        return bool(result["files"]) and output_stamps(result["files"]) == result["stamps"]
+    except (KeyError, OSError):
+        return False
