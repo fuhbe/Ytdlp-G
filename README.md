@@ -21,6 +21,10 @@
   <br><sub>Actual application UI, captured with Qt on Linux. Windows packages are available below.</sub>
 </p>
 
+## Compatibility Update (1.4.0 Beta 3)
+
+The beta defaults to H.264 video and stereo AAC-LC in MP4. Original format preserves supported source codecs, including AV1. Older devices limits video to 720p30. Use **Convert existing videos** for local files or folders. The default output directory is **Convertidos**. Playback of 4K or 60 FPS depends on the device decoder. [Profiles and projector test](docs/turbo/beta3.md)
+
 ## Simple by design
 
 Ytdlp-G brings [yt-dlp](https://github.com/yt-dlp/yt-dlp) and

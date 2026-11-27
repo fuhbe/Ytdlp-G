@@ -1,11 +1,10 @@
 """Local-only batch processing. All encoding targets are private staging files."""
 
 import os
-import tempfile
 from pathlib import Path
 
 from .diagnostics import diagnostic
-from .media import PROFILES, ensure_mp4, fits_profile, probe
+from .media import PROFILES, ensure_mp4, fits_profile, media_stage, probe
 from .paths import publish, safe_name
 
 VIDEO_EXTENSIONS = {
@@ -39,7 +38,8 @@ def input_files(inputs, destination, recursive):
                     d
                     for d in dirs
                     if recursive
-                    and d not in {".ytdlp-g", "Convertidos"}
+                    and d != ".ytdlp-g"
+                    and not d.startswith((".mp4-", ".convert-"))
                     and not (Path(parent) / d).resolve().is_relative_to(destination)
                 )
                 for n in sorted(names):
@@ -78,7 +78,7 @@ def convert_batch(payload, emit):
                     continue
                 result = publish(source, destination / (safe_name(source.stem) + ".mp4"))
             else:
-                with tempfile.TemporaryDirectory(dir=destination, prefix=".convert-") as tmp:
+                with media_stage(destination) as tmp:
                     output = ensure_mp4(
                         source,
                         profile=profile,

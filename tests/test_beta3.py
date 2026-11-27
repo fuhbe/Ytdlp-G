@@ -225,3 +225,29 @@ def test_offline_dialog_retries_only_failed(qapp, tmp_path):
     assert not dialog.failed and len(list((tmp_path / "Convertidos").glob("*.mp4"))) == 2
     dialog.close()
     main.close()
+
+
+def test_level_matches_coded_geometry_and_frame_rate():
+    v = dict(width=1920, height=1080, avg_frame_rate="60/1")
+    assert not media.level_fits(v | {"level": 41})
+    assert media.level_fits(v | {"level": 42})
+    uhd = v | {"width": 3840, "height": 2160}
+    assert not media.level_fits(uhd | {"level": 51})
+    assert media.level_fits(uhd | {"level": 52})
+
+
+def test_cancel_offline_batch(qapp, tmp_path):
+    from test_ui import wait_until
+
+    from ytdlp_g.tasks import Task
+
+    source = fixture(tmp_path / "source.mp4", "libx264", size="1920x1080", fps="60")
+    dest = tmp_path / "out"
+    job = Task("offline_batch", dict(inputs=[str(source)], destination=str(dest), profile="legacy"))
+    errors = []
+    job.error.connect(errors.append)
+    job.start()
+    wait_until(qapp, lambda: bool(job.process.processId()))
+    job.cancel()
+    wait_until(qapp, lambda: bool(errors))
+    assert errors[-1]["code"] == "cancelled" and source.exists() and not list(dest.glob("*.mp4"))

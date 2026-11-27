@@ -149,14 +149,20 @@ class OfflineDialog(QDialog):
         if not retry:
             self.completed.clear()
             self.diag.clear()
-        self.request = {
-            "inputs": list(self.failed if retry else self.inputs),
-            "destination": self.destination.text(),
-            "profile": self.profile.currentData(),
-            "recursive": self.recursive.isChecked(),
-            "skip": self.skip.isChecked(),
-            "exclude": list(self.completed),
-        }
+        if retry:
+            self.request = self.request | {
+                "inputs": list(self.failed),
+                "exclude": list(self.completed),
+            }
+        else:
+            self.request = {
+                "inputs": list(self.inputs),
+                "destination": self.destination.text(),
+                "profile": self.profile.currentData(),
+                "recursive": self.recursive.isChecked(),
+                "skip": self.skip.isChecked(),
+                "exclude": list(self.completed),
+            }
         self.failed = []
         self.progress.setRange(0, 0)
         self.task = Task("offline_batch", self.request, self)

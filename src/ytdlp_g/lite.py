@@ -442,7 +442,13 @@ def identity(*parts):
     return hashlib.sha256(json.dumps(parts, ensure_ascii=True).encode()).hexdigest()[:20]
 
 
-def saved_item(record, target):
+def valid_saved_video(path, profile):
+    from .media import fits_profile, probe
+
+    return fits_profile(probe(path), profile)
+
+
+def saved_item(record, target, profile=None):
     try:
         saved = json.loads(record.read_text("utf-8"))
         paths = []
@@ -452,6 +458,8 @@ def saved_item(record, target):
                 return None
             stat = path.stat()
             if (stat.st_size, stat.st_mtime_ns) != (size, stamp):
+                return None
+            if profile and not valid_saved_video(path, profile):
                 return None
             paths.append(str(path))
         return (paths, saved.get("lower")) if paths else None
@@ -515,6 +523,10 @@ def retry_zip(payload, emit):
         stat = path.stat()
         if (stat.st_size, stat.st_mtime_ns) != (size, stamp):
             raise ValueError("zip_integrity")
+        if payload["quality"] != MP3 and not valid_saved_video(
+            path, payload.get("profile", "compatible")
+        ):
+            raise ValueError("zip_integrity")
         files.append(path)
     try:
         archive = finish_zip(files, destination, state["title"], emit)
@@ -541,7 +553,10 @@ def download_lite(payload, emit=lambda data: None):
         key = job_id(url, payload["quality"], "zip", payload.get("profile", "compatible"))
         pending = Path(payload["destination"]) / ".ytdlp-g" / key / "archive.json"
         if pending.is_file():
-            return retry_zip(payload | {"url": url}, emit)
+            try:
+                return retry_zip(payload | {"url": url}, emit)
+            except (ValueError, FileNotFoundError) as exc:
+                diagnostic("zip", exc)
     if payload.get("analysis"):
         return download_plan(payload, payload["analysis"], emit)
     with playlist_source(validate_url(payload["url"]), emit) as plan:
@@ -609,7 +624,7 @@ def download_plan(payload, analysis, emit):
             return [], None, None
         stamp = identity(job, i, item["url"], item.get("source_index"), item["title"])
         record = working / (stamp + ".json")
-        previous = saved_item(record, target)
+        previous = saved_item(record, target, profile if key != MP3 else None)
         if previous:
             report(item, {}, "completed")
             return previous[0], None, previous[1]

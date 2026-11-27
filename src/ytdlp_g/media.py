@@ -348,7 +348,8 @@ def verify_selection(path, selected, ffprobe=""):
         ),
         {},
     )
-    if video.get("height") != selected["height"] or not any(
+    height = selected["height"]
+    if video.get("height") not in {height, height + height % 2} or not any(
         s["codec_type"] == "audio" for s in streams
     ):
         raise ValueError("selection_mismatch")
@@ -391,12 +392,45 @@ def is_hdr(video):
     )
 
 
+# H.264 Annex A MaxFS and MaxMBPS, indexed by FFprobe level_idc.
+AVC_LIMITS = {
+    9: (99, 1485),
+    10: (99, 1485),
+    11: (396, 3000),
+    12: (396, 6000),
+    13: (396, 11880),
+    20: (396, 11880),
+    21: (792, 19800),
+    22: (1620, 20250),
+    30: (1620, 40500),
+    31: (3600, 108000),
+    32: (5120, 216000),
+    40: (8192, 245760),
+    41: (8192, 245760),
+    42: (8704, 522240),
+    50: (22080, 589824),
+    51: (36864, 983040),
+    52: (36864, 2073600),
+    60: (139264, 4177920),
+    61: (139264, 8355840),
+    62: (139264, 16711680),
+}
+
+
+def level_fits(v):
+    from .lite import frame_rate
+
+    fs, mbps = AVC_LIMITS.get(v.get("level"), (0, 0))
+    blocks = ((v.get("width", 0) + 15) // 16) * ((v.get("height", 0) + 15) // 16)
+    return 0 < blocks <= fs and blocks * (frame_rate(v) or 0) <= mbps * 1.002
+
+
 def compatible_video(v):
     return (
         v.get("codec_name") == "h264"
         and v.get("pix_fmt") == "yuv420p"
         and v.get("profile") in {"Constrained Baseline", "Baseline", "Main", "High"}
-        and 0 < (v.get("level") or 0) <= 62
+        and level_fits(v)
         and not is_hdr(v)
         and v["width"] % 2 == v["height"] % 2 == 0
     )
@@ -652,12 +686,16 @@ def ensure_mp4(
                         )
                 if not proc.returncode:
                     candidate = probe(output, ffprobe)
-                    if not strict or fits_profile(candidate, profile):
+                    color_ok = not (strict and hdr) or all(
+                        tracks(candidate)[0].get(key) == "bt709"
+                        for key in ("color_transfer", "color_primaries", "color_space")
+                    )
+                    if color_ok and (not strict or fits_profile(candidate, profile)):
                         break
             else:
                 raise ValueError("hdr_unsupported" if hdr else "conversion_failed")
         progress({"status": "verifying"})
-        final = probe(output, ffprobe)
+        final = candidate
         types = {s.get("codec_type") for s in final["streams"]}
         if "video" not in types or (require_audio and "audio" not in types):
             raise ValueError("media_invalid")

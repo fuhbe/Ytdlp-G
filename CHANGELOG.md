@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 Beta 3 — Compatibility Update
+
+- Default MP4 output to verified 8-bit H.264 and stereo AAC-LC. Preserve source size and timing, with HDR-to-SDR tone mapping on supported inputs.
+- Add Original format and an opt-in Older devices profile capped at 1280×720 and 30 FPS.
+- Convert existing files and folders offline with cancellation, selective track copy, collision-safe naming and retry.
+- Keep playlist recovery isolated by output profile and validate resumed MP4 tracks.
+
 ## 1.3.0 — Updating engine, MP4 with sound and MP3-only audio
 
 - Refresh the FFmpeg 8.1 shared build after the former upstream asset expired; verify its published checksum and GitHub asset digest.

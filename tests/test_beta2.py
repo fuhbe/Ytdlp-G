@@ -74,6 +74,11 @@ def test_order_partial_retry_and_limits(count, tmp_path, monkeypatch):
 
     monkeypatch.setattr(lite, "full_info", inspect)
     monkeypatch.setattr(lite, "download", transfer)
+    monkeypatch.setattr(
+        lite,
+        "valid_saved_video",
+        lambda path, profile: path.read_bytes() == bytes([int(path.stem)]),
+    )
     events = []
     first = lite.download_lite(payload, events.append)
     assert first["status"] == "partial" and [f["index"] for f in first["failures"]] == sorted(

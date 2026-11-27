@@ -26,3 +26,7 @@ La versión 1.3.0 se publica tras superar pruebas y verificaciones funcionales d
 
 [Guía completa en inglés](README.md) · [Informar de un problema](https://github.com/fuhbe/Ytdlp-G/issues/new/choose).
 Código propio: [MIT](LICENSE); [licencias de dependencias](THIRD_PARTY_NOTICES.md).
+
+## Beta 3 para proyectores y televisores
+
+El perfil predeterminado exporta H.264 y AAC-LC estéreo. **Formato original** conserva códecs como AV1. **Dispositivos antiguos** limita la salida a 720p30. El conversor procesa archivos locales o carpetas y guarda los resultados en **Convertidos**.
