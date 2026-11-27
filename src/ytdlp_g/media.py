@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -81,7 +82,53 @@ def probe(path, configured=""):
 
         diagnostic("probe", RuntimeError(result.stderr))
         raise ValueError("media_invalid")
-    return json.loads(result.stdout)
+    info = json.loads(result.stdout)
+    video, _ = tracks(info)
+    if (
+        video.get("profile") in {"Constrained Baseline", "Baseline"}
+        and video.get("level", 99) <= 31
+    ):
+        # FFprobe 8 omits refs; read the AVC sequence header for the actual DPB and VBV.
+        headers = subprocess.run(
+            [
+                executable("ffmpeg"),
+                "-hide_banner",
+                "-nostdin",
+                "-protocol_whitelist",
+                "file,crypto,data",
+                "-i",
+                str(path),
+                "-map",
+                "0:V:0",
+                "-c:v",
+                "copy",
+                "-bsf:v",
+                "trace_headers",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            timeout=15,
+            **hidden_process(),
+        )
+
+        def header(field):
+            found = re.search(rb"\b" + field + rb"\s+[01]+ = (\d+)", headers.stderr)
+            return int(found[1]) if found else None
+
+        refs = header(b"max_num_ref_frames")
+        scale = header(b"bit_rate_scale")
+        rate = header(rb"bit_rate_value_minus1\[0\]")
+        video["legacy_refs"] = refs
+        video["legacy_peak"] = (
+            (rate + 1) << (6 + scale)
+            if rate is not None and scale is not None and scale <= 15
+            else None
+        )
+    return info
 
 
 def parse_time(text):
@@ -456,7 +503,8 @@ def legacy_geometry(v):
         and rate <= 30.01
         and v.get("profile") in {"Constrained Baseline", "Baseline"}
         and v.get("level", 99) <= 31
-        and v.get("refs", 99) <= 1
+        and v.get("legacy_refs") == 1
+        and 0 < (v.get("legacy_peak") or 0) <= 5000000
         and 0 < int(v.get("bit_rate") or 0) <= 5000000
     )
 
@@ -601,6 +649,8 @@ def ensure_mp4(
                             r"select=isnan(prev_selected_t)+gte(t-prev_selected_t\,1/30-0.000001)"
                         )
                         args += [
+                            "-x264-params",
+                            "nal-hrd=vbr",
                             "-bsf:v",
                             r"setts=duration=max(DURATION\,ceil(1/(30*TB)))",
                             "-profile:v",

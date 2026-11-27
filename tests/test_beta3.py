@@ -77,9 +77,30 @@ def stream_digest(path, stream):
 )
 def test_convert_existing_codecs(tmp_path, video, audio, extra):
     av1 = video == "libaom-av1"
-    source = fixture(
-        tmp_path / "vídeo.mkv", video, audio, "1920x1080" if av1 else "160x90", extra=extra
-    )
+    if "aac_main" in extra:
+        # FFmpeg 8 still decodes AAC Main but its native encoder only produces LC.
+        source = tmp_path / "vídeo.mkv"
+        sound = Path(__file__).parent / "fixtures" / "aac-main.m4a"
+        ffmpeg(
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=160x90:r=25",
+            "-i",
+            sound,
+            "-t",
+            "0.48",
+            "-c:v",
+            video,
+            "-c:a",
+            "copy",
+            source,
+        )
+        assert media.tracks(media.probe(source))[1]["profile"] == "Main"
+    else:
+        source = fixture(
+            tmp_path / "vídeo.mkv", video, audio, "1920x1080" if av1 else "160x90", extra=extra
+        )
     if av1:
         mp4 = source.with_suffix(".mp4")
         ffmpeg("-i", source, "-c", "copy", mp4)
