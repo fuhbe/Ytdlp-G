@@ -330,6 +330,7 @@ def download(
     aria=False,
     recovery=False,
 ):
+    profile = payload.get("profile", "compatible") if payload.get("lite") else None
     options = Options.from_dict(payload["options"])
     destination = Path(payload["destination"]).resolve()
     identifier = safe_name(payload["id"], 40)
@@ -357,6 +358,12 @@ def download(
             )
 
     extraction = download_options(options, stage, hook)
+    if payload.get("lite"):
+        extraction["postprocessor_hooks"] = [
+            lambda e: emit(
+                {"status": "merging" if e.get("postprocessor") == "Merger" else "processing"}
+            )
+        ]
     if (
         not recovery
         and info_cache
@@ -370,7 +377,11 @@ def download(
         # FFmpegMerger defaults to stream copy. Unsupported video is merged
         # losslessly in MKV before the capability-tested, locally retryable encode.
         direct_mp4 = mp4_video(video.get("vcodec"))
-        if direct_mp4 and not str(audio.get("acodec", "")).startswith(
+        if profile in {"compatible", "legacy"}:
+            direct_mp4 = direct_mp4 and str(audio.get("acodec", "")).startswith(
+                ("aac", "mp4a", "opus", "ac3", "eac3", "mp3", "alac")
+            )
+        elif direct_mp4 and not str(audio.get("acodec", "")).startswith(
             ("aac", "mp4a", "mp3", "ac3", "eac3", "alac")
         ):
             extraction["postprocessor_args"] = {"merger+ffmpeg_o": ["-c:a", "aac", "-b:a", "320k"]}
@@ -422,10 +433,11 @@ def download(
             progress=emit,
             require_audio=options.kind == "video",
             preserve_codec=bool(payload.get("lite")),
+            profile=profile,
             ffmpeg=options.ffmpeg,
             ffprobe=options.ffprobe,
         )
-        if payload.get("selected"):
+        if payload.get("selected") and profile != "legacy":
             verify_selection(output, payload["selected"], options.ffprobe)
     if options.info_json:
         # Do not export signed media URLs or request headers from yt-dlp's raw info.

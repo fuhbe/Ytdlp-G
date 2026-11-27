@@ -144,7 +144,7 @@ def enrich_metadata(info):
     return info
 
 
-def quality_catalog(info):
+def quality_catalog(info, profile="compatible"):
     """Offer actual source resolutions with sound, always delivered as MP4/MP3."""
     formats = usable_formats(info)
     pure_audio = [
@@ -154,6 +154,18 @@ def quality_catalog(info):
     # bitrate and source preferences. Preserve that ranking for separate sound.
     best_audio = pure_audio[-1] if pure_audio else None
     choices = {}
+    best_sources = {}
+    sound = best_audio
+    if profile != "original" and sound:
+        for candidate in reversed(pure_audio):
+            if (
+                str(candidate.get("acodec")).startswith(("mp4a.40.2", "aac_low"))
+                and candidate.get("audio_channels") == 2
+                and candidate.get("language") == sound.get("language")
+                and float(candidate.get("abr") or 0) >= 0.85 * float(sound.get("abr") or 0)
+            ):
+                sound = candidate
+                break
     for rank, video in enumerate(formats):
         height = video.get("height")
         if not height or video.get("vcodec") in {None, "none"}:
@@ -168,13 +180,27 @@ def quality_catalog(info):
         hdr = bool(dynamic and dynamic != "SDR")
         key = f"video:mp4:{int(height)}:{fps or '?'}:{dynamic or '?'}"
         # Formats arrive in yt-dlp's source preference order, worst first.
+        previous = best_sources.get(key)
+        if profile != "original" and previous:
+            # Prefer AVC only within the same source quality tier and geometry.
+            prior_rate = float(previous.get("vbr") or previous.get("tbr") or 0)
+            rate = float(video.get("vbr") or video.get("tbr") or 0)
+            if (
+                str(previous.get("vcodec")).startswith(("avc", "h264"))
+                and not str(video.get("vcodec")).startswith(("avc", "h264"))
+                and previous.get("quality") == video.get("quality")
+                and previous.get("width") == video.get("width")
+                and prior_rate >= rate * 0.85
+            ):
+                continue
+        best_sources[key] = video
         choices[key] = {
             "key": key,
             "kind": "video",
             "height": int(height),
             "container": "mp4",
             "video_stream": str(video["format_id"]),
-            "audio_stream": "" if combined else str(best_audio["format_id"]),
+            "audio_stream": "" if combined else str(sound["format_id"]),
             "codec": str(video.get("vcodec") or ""),
             "hdr": hdr,
             "dynamic_range": dynamic,
@@ -256,9 +282,9 @@ def common_choices(catalogs, playlist=None):
     return result
 
 
-def inspect_lite(url, emit=lambda data: None):
+def inspect_lite(url, emit=lambda data: None, profile="compatible"):
     url = validate_url(url)
-    return turbo.cached(("catalog", url), lambda: _inspect(url, emit))
+    return turbo.cached(("catalog", url, profile), lambda: _inspect(url, emit, profile))
 
 
 def full_info(url, index=None, entry=None, refresh=False):
@@ -358,7 +384,7 @@ def list_items(url, emit):
         return plan | {"items": items, "skipped": sum("url" not in i for i in items)}
 
 
-def _inspect(url, emit):
+def _inspect(url, emit, profile):
     plan = list_items(url, emit)
 
     def analyze(item):
@@ -366,7 +392,7 @@ def _inspect(url, emit):
             return {}
         emit({"phase": "analyzing", "current": item["index"], "total": len(plan["items"])})
         try:
-            return quality_catalog(full_info(item["url"], item.get("source_index")))
+            return quality_catalog(full_info(item["url"], item.get("source_index")), profile)
         except (Cancelled, DownloadCancelled):
             raise
         except Exception as exc:
@@ -460,11 +486,25 @@ def finish_zip(files, destination, title, emit):
     )
 
 
+def job_id(url, quality, mode, profile):
+    if quality == MP3 or profile == "original":
+        return identity(url, quality, mode)
+    from .media import PROFILES
+
+    if profile not in PROFILES:
+        raise ValueError("invalid_options")
+    return identity(url, quality, mode, profile)
+
+
 def retry_zip(payload, emit):
     from .paths import cleanup_stage
 
     destination = Path(payload["destination"]).resolve()
-    working = destination / ".ytdlp-g" / identity(payload["url"], payload["quality"], "zip")
+    working = (
+        destination
+        / ".ytdlp-g"
+        / job_id(payload["url"], payload["quality"], "zip", payload.get("profile", "compatible"))
+    )
     state = json.loads((working / "archive.json").read_text("utf8"))
     target = (working / "files").resolve()
     files = []
@@ -498,7 +538,7 @@ def retry_zip(payload, emit):
 def download_lite(payload, emit=lambda data: None):
     url = payload.get("url") or (payload.get("analysis") or {}).get("url")
     if url and payload["mode"] == "zip":
-        key = identity(url, payload["quality"], "zip")
+        key = job_id(url, payload["quality"], "zip", payload.get("profile", "compatible"))
         pending = Path(payload["destination"]) / ".ytdlp-g" / key / "archive.json"
         if pending.is_file():
             return retry_zip(payload | {"url": url}, emit)
@@ -521,7 +561,8 @@ def download_plan(payload, analysis, emit):
         raise ValueError("invalid_options")
     destination = Path(payload["destination"]).resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    job = identity(analysis.get("url") or analysis["items"][0].get("url"), key, mode)
+    profile = payload.get("profile", "compatible")
+    job = job_id(analysis.get("url") or analysis["items"][0].get("url"), key, mode, profile)
     working = destination / ".ytdlp-g" / job
     target = working / "files" if mode == "zip" else destination
     items = analysis["items"]
@@ -538,6 +579,10 @@ def download_plan(payload, analysis, emit):
                 fractions[i] = 1
             elif event.get("status") == "running":
                 fractions[i] = max(fractions.get(i, 0), min(0.9, event.get("progress", 0) * 0.009))
+            elif event.get("status") == "processing" and event.get("encoder"):
+                fractions[i] = max(
+                    fractions.get(i, 0), 0.90 + min(0.09, event.get("progress", 0) * 0.0009)
+                )
             emit(
                 event
                 | counts
@@ -578,7 +623,7 @@ def download_plan(payload, analysis, emit):
                     item.get("source_index"),
                     refresh=bool(attempt) or not analysis.get("catalog_version"),
                 )
-                selected = select_format(quality_catalog(fresh), key)
+                selected = select_format(quality_catalog(fresh, profile), key)
                 if (
                     original
                     and selected["kind"] == "video"
@@ -607,6 +652,7 @@ def download_plan(payload, analysis, emit):
                         "id": identifier,
                         "lite": True,
                         "selected": selected,
+                        "profile": profile,
                         "url": item["url"],
                         "source_index": item.get("source_index"),
                         "destination": str(target),

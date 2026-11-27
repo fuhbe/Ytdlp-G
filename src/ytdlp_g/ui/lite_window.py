@@ -25,6 +25,7 @@ from .. import __version__
 from ..i18n import Translator
 from ..paths import data_dir, validate_url
 from ..tasks import MediaSession, Task
+from .offline import OfflineDialog, profile_combo
 
 
 class AeroTitle(QFrame):
@@ -154,10 +155,14 @@ class LiteWindow(QWidget):
         self.quality.currentIndexChanged.connect(self.update_download_enabled)
         quality_row.addWidget(self.quality, 1)
         layout.addLayout(quality_row)
-        notice = self.text("lite_available_notice")
-        notice.setWordWrap(True)
-        notice.setObjectName("hint")
-        layout.addWidget(notice)
+        self.profile = profile_combo(self.tr, settings.values["video_profile"])
+        self.profile.setAccessibleName(self.tr("compatibility"))
+        quality_row.addWidget(self.profile)
+        self.profile.currentIndexChanged.connect(self.profile_changed)
+        self.profile_hint = QLabel()
+        self.profile_hint.setWordWrap(True)
+        self.profile_hint.setObjectName("hint")
+        layout.addWidget(self.profile_hint)
         destination = QHBoxLayout()
         self.destination = QLineEdit(settings.values["destination"])
         self.tr.bind(self.destination.setAccessibleName, "destination")
@@ -183,6 +188,8 @@ class LiteWindow(QWidget):
         self.download_button.setObjectName("downloadButton")
         self.download_button.setEnabled(False)
         actions.addWidget(self.open_button)
+        self.offline = self.button("offline_title", lambda: OfflineDialog(self).exec())
+        actions.addWidget(self.offline)
         self.details_button = self.button("lite_details", self.show_details)
         self.details_button.hide()
         actions.addWidget(self.details_button)
@@ -286,6 +293,8 @@ class LiteWindow(QWidget):
 
     def set_busy(self, busy):
         for control in (
+            self.profile,
+            self.offline,
             self.retry_button,
             self.url,
             self.paste,
@@ -434,7 +443,7 @@ class LiteWindow(QWidget):
             self.progress.setValue(0)
             self.status.setText(self.tr("lite_choose_quality"))
 
-        self.run_task("lite_inspect", {"url": url}, result)
+        self.run_task("lite_inspect", {"url": url, "profile": self.profile.currentData()}, result)
 
     def show_summary(self):
         if self.analysis:
@@ -451,7 +460,16 @@ class LiteWindow(QWidget):
             )
             self.summary.setText(text)
 
+    def profile_changed(self):
+        self.settings.values["video_profile"] = self.profile.currentData()
+        self.settings.save()
+        self.refresh_choices()
+
     def refresh_choices(self):
+        video = self.kind.currentData() == "video"
+        self.profile.setVisible(video)
+        self.profile_hint.setVisible(video)
+        self.profile_hint.setText(self.tr("hint_" + self.profile.currentData()))
         selected = self.quality.currentData()
         self.quality.clear()
         choices = (
@@ -498,6 +516,7 @@ class LiteWindow(QWidget):
             url=url,
             analysis=self.analysis,
             quality=self.quality.currentData(),
+            profile=self.profile.currentData(),
             mode=self.output.currentData(),
             destination=self.destination.text().strip(),
         )
@@ -578,6 +597,9 @@ class LiteWindow(QWidget):
             "checking": "lite_checking",
             "running": "running",
             "processing": "processing",
+            "merging": "merging",
+            "verifying": "verifying",
+            "tone_mapping": "tone_mapping",
             "archiving": "archiving",
         }.get(phase, "busy")
         current, total = (
@@ -594,7 +616,14 @@ class LiteWindow(QWidget):
             detail += " · " + self.tr("lite_counts", **data)
         self.status.setText(self.tr(key) + detail)
         if (
-            (data.get("aggregate") and not total)
+            (
+                data.get("aggregate")
+                and (
+                    not total
+                    or phase in {"checking", "verifying", "merging"}
+                    and not data.get("progress")
+                )
+            )
             or not data.get("aggregate")
             and (
                 phase in {"engine_updating", "analyzing", "checking"}
@@ -644,6 +673,8 @@ class LiteWindow(QWidget):
         self.save_preferences()
 
     def retranslate(self):
+        for i in range(self.profile.count()):
+            self.profile.setItemText(i, self.tr("profile_" + self.profile.itemData(i)))
         self.show_summary()
         self.refresh_choices()
         if not self.analysis:

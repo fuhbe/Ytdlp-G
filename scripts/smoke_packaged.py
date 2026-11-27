@@ -273,6 +273,40 @@ def run_smoke(package, report):
             assert (
                 next(s for s in video_info["streams"] if s["codec_type"] == "video")["height"] == 90
             )
+            v = next(s for s in video_info["streams"] if s["codec_type"] == "video")
+            a = next(s for s in video_info["streams"] if s["codec_type"] == "audio")
+            assert (v["codec_name"], v["codec_tag_string"], v["pix_fmt"]) == (
+                "h264",
+                "avc1",
+                "yuv420p",
+            )
+            assert a["profile"] == "LC" and a["channels"] == 2
+            offline = worker(
+                "offline_batch",
+                {
+                    "inputs": [str(fixture)],
+                    "destination": str(root / "Convertidos"),
+                    "profile": "compatible",
+                },
+            )
+            assert len(offline["files"]) == 1 and not offline["failures"]
+            subprocess.run(
+                [
+                    str(tools / "ffmpeg.exe"),
+                    "-v",
+                    "error",
+                    "-xerror",
+                    "-i",
+                    offline["files"][0],
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                check=True,
+                timeout=30,
+                **process_options,
+            )
+            evidence["checks"].append("decoded offline H.264/AAC output")
             assert list((root / "lite zip").rglob("*.mp4")) == []
             (root / "playlist.html").write_text(
                 '<html><head><title>Two videos</title></head><body><video src="authorized%20sample.mp4" controls></video><video src="authorized%20sample.mp4?second" controls></video></body></html>',

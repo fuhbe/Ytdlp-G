@@ -282,7 +282,9 @@ def test_vfr_hdr_copy_preserves_pts(media_file, media_url, tmp_path):
     )
     url = media_url.rsplit("/", 1)[0] + "/" + original.name
     result = lite.download_lite(
-        dict(url=url, quality=lite.BEST, mode="normal", destination=str(tmp_path))
+        dict(
+            url=url, quality=lite.BEST, mode="normal", profile="original", destination=str(tmp_path)
+        )
     )
     assert result["status"] == "complete", result
 

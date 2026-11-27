@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ytdlp-g"
-version = "1.4.0b2"
+version = "1.4.0b3"
 description = "Multilingual desktop downloader and media toolkit"
 requires-python = ">=3.12"
 license = "MIT"

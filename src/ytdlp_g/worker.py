@@ -85,6 +85,12 @@ def dispatch(request):
                 last.update(phase=phase, stamp=now)
                 emit("progress", data)
 
+        if action == "offline_batch":
+            from .offline import convert_batch
+
+            emit("result", convert_batch(payload, progress))
+            return 0
+
         from .engine import activate_engine, prepare_engine
 
         if ENGINE is None:
@@ -108,7 +114,7 @@ def dispatch(request):
         elif action == "lite_inspect":
             from .lite import inspect_lite
 
-            result = inspect_lite(payload["url"], progress)
+            result = inspect_lite(payload["url"], progress, payload.get("profile", "compatible"))
         elif action == "lite_zip_retry":
             from .lite import retry_zip
 

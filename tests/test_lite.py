@@ -398,6 +398,7 @@ def test_real_separate_webm_video_and_audio_become_mp4(media_file, media_url, tm
     result = lite.download_lite(
         {
             "analysis": analysis,
+            "profile": "original",
             "quality": lite.BEST,
             "mode": "normal",
             "destination": str(tmp_path),

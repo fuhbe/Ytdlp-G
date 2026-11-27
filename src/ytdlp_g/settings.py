@@ -31,6 +31,7 @@ class Settings:
             "options": Options().to_dict(),
             "profiles": {},
             "performance": {},
+            "video_profile": "compatible",
         }
         if path.exists():
             try:
