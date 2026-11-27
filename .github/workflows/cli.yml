@@ -1,0 +1,65 @@
+name: Validate Windows CLI
+on:
+  push:
+    branches: [feat/windows-cli-beta1]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            build/dependencies/ffmpeg.zip
+            build/dependencies/quickjs.exe
+            build/dependencies/aria2.zip
+          key: windows-dependencies-${{ hashFiles('scripts/dependencies.json') }}
+      - run: ./scripts/bootstrap_windows.ps1
+      - run: ./scripts/fetch_dependencies.ps1
+      - run: ./scripts/test_windows.ps1
+      - name: Package console binaries
+        run: |
+          . scripts/common.ps1
+          $python = Get-ProjectPython
+          Invoke-Checked $python @('scripts/collect_licenses.py','build/cli-licenses')
+          Invoke-Checked $python @('-m','PyInstaller','--noconfirm','Ytdlp-G-CLI.spec')
+          mkdir artifacts
+          Copy-Item dist/Ytdlp-G-CLI.exe artifacts/
+          Copy-Item docs/CLI.md dist/cli-portable/
+          Compress-Archive dist/cli-portable/* artifacts/Ytdlp-G-CLI-portable.zip
+          Copy-Item docs/CLI.md,build/test-results.xml artifacts/
+          git archive --format=zip -o artifacts/Ytdlp-G-CLI-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-packages
+          path: artifacts/
+          compression-level: 0
+  smoke:
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-packages
+          path: artifacts
+      - name: Run distributed programs in clean Windows environment
+        shell: pwsh
+        run: |
+          Expand-Archive artifacts/Ytdlp-G-CLI-portable.zip 'build portable'
+          python scripts/smoke_cli.py artifacts/Ytdlp-G-CLI.exe 'build portable/ytdlp-g.exe' artifacts
+          if ($LASTEXITCODE -ne 0) { throw 'CLI smoke failed' }
+          Get-ChildItem artifacts -File | ForEach-Object { "$((Get-FileHash $_).Hash.ToLowerInvariant())  $($_.Name)" } | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-verified
+          path: artifacts/
+          compression-level: 0
