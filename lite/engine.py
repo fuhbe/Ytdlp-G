@@ -1,4 +1,5 @@
 """External media tools, per-item selection, conversion and validation."""
+from fractions import Fraction
 import hashlib
 import json
 import os
@@ -64,7 +65,7 @@ class Runner:
                     if on_line:
                         on_line(line)
                     lines.append(line)
-                    if len(lines) > 100:
+                    if on_line and len(lines) > 100:
                         del lines[0]
                 code = proc.wait()
             finally:
@@ -78,7 +79,7 @@ class Runner:
 
     def ydl(self):
         args = [tool("yt-dlp"), "--ignore-config", "--encoding", "utf-8", "--color", "never",
-                "--socket-timeout", "30", "--retries", "0", "--fragment-retries", "0",
+                "--concurrent-fragments", "2", "--socket-timeout", "30", "--retries", "0", "--fragment-retries", "0",
                 "--ffmpeg-location", str(Path(tool("ffmpeg")).parent)]
         if os.name == "nt":
             args += ["--js-runtimes", "deno:" + tool("deno")]
@@ -89,13 +90,13 @@ class Runner:
                         "--yes-playlist" if whole else "--no-playlist", "--", validate_url(url)])
         info = json.loads(text.splitlines()[-1])
         if "entries" not in info:
-            return [(url, info.get("title") or info["id"], "", 0, info.get("thumbnail"))]
+            return [(url, info.get("title") or info["id"], "", 0, None, info.get("thumbnail"))]
         group = info.get("title") or "Playlist"
         entries = info["entries"] or []
         return [(entry.get("webpage_url") or entry.get("url"), entry.get("title") or group,
-                 group, entry.get("playlist_index") or i, entry.get("thumbnail") or
+                 group, entry.get("playlist_index") or i, i if entry.get("webpage_url") == url else None, entry.get("thumbnail") or
                  next((t.get("url") for t in entry.get("thumbnails") or []), None))
-                if entry else (None, group, group, i, None)
+                if entry else (None, group, group, i, None, None)
                 for i, entry in enumerate(entries, 1) if whole or i == 1]
 
     def probe(self, path):
@@ -103,7 +104,7 @@ class Runner:
                                     "-of", "json", str(path)]))
 
     def process(self, item, dest, ext, cap):
-        url, title, group, index, _ = item
+        url, title, group, index, source_index, _ = item
         if not url:
             raise ValueError("unavailable")
         url = validate_url(url)
@@ -115,9 +116,10 @@ class Runner:
         key = hashlib.sha256(json.dumps([item[:4], ext, cap]).encode()).hexdigest()[:24]
         work = folder / ".ytdlp-g-lite" / key
         work.mkdir(parents=True, exist_ok=True)
-        limit = f"[height<=?{cap}]" if cap else ""
+        height = 720 if cap == -1 else cap
+        limit = f"[height<=?{height}]" if cap else ""
         avc = f"[vcodec^=avc1]{limit}"
-        fmt = (f"bv*{avc}+ba[acodec^=mp4a]/b{avc}/bv*{avc}+ba/bv*{limit}+ba/b{limit}"
+        fmt = (f"bv*{avc}+ba[acodec^=mp4a]/b{avc}/bv*{avc}+ba/bv*{limit}+ba/b{limit}/bv*+ba/b"
                if ext == "mp4" else "ba/b")
         def progress(line):
             if line.startswith("P|"):
@@ -127,7 +129,8 @@ class Runner:
             elif line.startswith("[Merger]"):
                 self.notify("merge", "")
         self.notify("video" if ext == "mp4" else "audio", "")
-        self.run(self.ydl() + ["--no-playlist", "--newline", "--progress", "--progress-template",
+        selection = ["--playlist-items", str(source_index)] if source_index else ["--no-playlist"]
+        self.run(self.ydl() + selection + [ "--newline", "--progress", "--progress-template",
                  "download:P|%(info.vcodec)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._downloaded_bytes_str)s|%(progress._eta_str)s",
                  "--merge-output-format", "mkv", "--write-info-json", "-f", fmt, "-o",
                  str(work / "source.%(ext)s").replace("%", "%%").replace("%%(ext)s","%(ext)s"),
@@ -161,8 +164,12 @@ class Runner:
                     filters += ["zscale=t=linear:npl=100", "format=gbrpf32le",
                                 "zscale=p=bt709", "tonemap=mobius", "zscale=t=bt709:m=bt709:r=tv"]
                     args += ["-colorspace","bt709","-color_primaries","bt709","-color_trc","bt709"]
-                filters += [f"scale=-2:trunc(min(ih\\,{cap or v['height']})/2)*2", "format=yuv420p"]
+                filters += [f"scale=-2:trunc(min(ih\\,{(720 if cap == -1 else cap) or v['height']})/2)*2", "format=yuv420p"]
                 # Width is derived from aspect ratio. Keep the height even for 4:2:0.
+                if cap == -1:
+                    args += ["-profile:v", "baseline"]
+                    if fps(v) > 30:
+                        filters.append("fps=30")
                 args += ["-vf", ",".join(filters), "-c:v", "libx264", "-crf", "23", "-preset", "medium"]
             args += ["-c:a", "copy"] if audio_ok(a) else [
                 "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "192k"]
@@ -199,7 +206,16 @@ def hdr(v):
     return v.get("color_transfer") in ("smpte2084", "arib-std-b67")
 
 
+def fps(v):
+    rate = v.get("avg_frame_rate")
+    return Fraction(rate) if rate and rate != "0/0" else Fraction(v.get("r_frame_rate", "0"))
+
+
 def video_ok(v, cap):
+    if cap == -1:
+        if "Baseline" not in v.get("profile", "") or fps(v) > 30:
+            return False
+        cap = 720
     return (v.get("codec_name") == "h264" and v.get("pix_fmt") == "yuv420p"
             and not hdr(v) and (not cap or v["height"] <= cap))
 

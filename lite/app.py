@@ -18,6 +18,7 @@ STRINGS = {
     "paste": ("Colar", "Paste", "Pegar"), "inspect": ("Analisar", "Analyze", "Analizar"),
     "single": ("Somente o item atual", "Current item only", "Solo el elemento actual"),
     "whole": ("Playlist inteira", "Entire playlist", "Lista completa"),
+    "legacy": ("Aparelhos antigos · 720p", "Older devices · 720p", "Equipos antiguos · 720p"),
     "best": ("Melhor qualidade disponível", "Best available quality", "Mejor calidad disponible"),
     "cap": ("Até", "Up to", "Hasta"), "folder": ("Pasta de destino", "Destination folder", "Carpeta de destino"),
     "download": ("Baixar", "Download", "Descargar"), "cancel": ("Cancelar", "Cancel", "Cancelar"),
@@ -93,7 +94,7 @@ class Job(QThread):
             for url in self.urls:
                 self.runner.notify("analyze", url)
                 try:
-                    found = self.runner.inspect(url, self.whole)
+                    found = self.runner.inspect(url, self.whole or self.action == "inspect")
                     if not found:
                         raise ValueError("unavailable")
                     self.event.emit("preview", (found[0][2] or found[0][1], len(found)))
@@ -233,7 +234,7 @@ class Window(QMainWindow):
         self.links.setPlaceholderText(self.trkey("links"))
         self.status.setText(self.trkey("idle"))
         for combo,names in ((self.scope,[self.trkey("single"),self.trkey("whole")]),
-            (self.quality,[self.trkey("best")] + [f"{self.trkey('cap')} {x}p" for x in (2160,1440,1080,720,480,360)])):
+            (self.quality,[self.trkey("best")] + [f"{self.trkey('cap')} {x}p" for x in (2160,1440,1080,720,480,360)] + [self.trkey("legacy")])):
             index = combo.currentIndex()
             combo.clear()
             combo.addItems(names)
@@ -279,14 +280,14 @@ class Window(QMainWindow):
             return
         self.settings.setValue("destination",self.dest.text())
         self.job = Job(action,urls,bool(self.scope.currentIndex()),self.dest.text(),self.ext.currentText().lower(),
-                       [0,2160,1440,1080,720,480,360][self.quality.currentIndex()],self.failed if action=="retry" else [])
+                       [0,2160,1440,1080,720,480,360,-1][self.quality.currentIndex()],self.failed if action=="retry" else [])
         self.job.event.connect(self.event_received)
         self.job.finished.connect(lambda: self.busy(False))
         self.busy(True)
         self.job.start()
 
     def busy(self,value):
-        self.root.findChild(QFrame,"card").setEnabled(True)
+        
         for widget in (self.download,self.retry,self.links,self.ext,self.quality,self.scope,self.dest,
                        self.menu,*(self.labels[k] for k in ("paste","inspect","folder","update"))):
             widget.setEnabled(not value)

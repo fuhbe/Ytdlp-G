@@ -89,3 +89,34 @@ def test_cancel(runner):
     timer.start()
     with pytest.raises(engine.Cancelled):
         runner.run([sys.executable,"-c","import time; time.sleep(60)"])
+
+
+@pytest.mark.parametrize("ext",["mp3","mp4"])
+def test_playlist_and_multiple_links(tmp_path,ext):
+    from app import Job
+    source(tmp_path,"libx264")
+    (tmp_path/"list.html").write_text('<html><title>Media</title><video src="source.mp4"></video><video src="absent.mp4"></video><video src="source.mp4?third"></video></html>')
+    server = http.server.ThreadingHTTPServer(("127.0.0.1",0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(tmp_path)))
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        dest = tmp_path/"Música e vídeo"
+        job = Job("download",[base+"/list.html",base+"/source.mp4"],True,str(dest),ext,720,[])
+        events = []
+        job.event.connect(lambda k,v:events.append((k,v)))
+        job.run()
+        paths = sorted(p.name[:3] for p in dest.glob("*/*."+ext))
+        assert paths == ["001","003"], events
+        assert len(list(dest.glob("*."+ext))) == 1
+        assert len(dict(events)["failures"]) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_legacy(tmp_path,runner):
+    src = source(tmp_path,"libx264")
+    dst = tmp_path/"legacy.mp4"
+    runner.convert(src,dst,"mp4",-1)
+    _,v = engine.streams(runner.probe(dst))
+    assert engine.fps(v) == 30 and "Baseline" in v["profile"]

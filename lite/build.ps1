@@ -36,6 +36,9 @@ Compress-Archive $pkg artifacts/Ytdlp-G-Lite-portable.zip
 $install = Join-Path $env:RUNNER_TEMP 'Teste Lite'
 $setup = Start-Process artifacts/Ytdlp-G-Lite-Setup.exe -ArgumentList "/VERYSILENT /NORESTART /DIR=`"$install`"" -Wait -PassThru
 if ($setup.ExitCode) { throw 'Install failed' }
+$savedPath = $env:PATH
+$env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+$env:PYTHONHOME = Join-Path $env:RUNNER_TEMP 'absent-python'
 $smoke = Start-Process "$install/Ytdlp-G-Lite.exe" -PassThru
 try {
     $ready = $false
@@ -46,5 +49,7 @@ try {
     }
     if (-not $ready) { throw 'Installed UI did not open' }
 } finally { if (-not $smoke.HasExited) { taskkill /F /T /PID $smoke.Id } }
+Remove-Item Env:PYTHONHOME
+$env:PATH = $savedPath
 git archive --format=zip --output=artifacts/Ytdlp-G-Lite-source.zip HEAD
 Get-ChildItem artifacts -File | ForEach-Object { "$((Get-FileHash $_).Hash.ToLower())  $($_.Name)" } | Set-Content artifacts/SHA256SUMS.txt
