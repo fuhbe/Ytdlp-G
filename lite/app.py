@@ -475,10 +475,29 @@ def main():
     lockdir.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(lockdir / "active.lock"))
     if not lock.tryLock():
-        return
+        return 2
     window = Window()
     window.show()
-    app.exec()
+    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+        window.job.wait()
+        app.processEvents()
+        snapshot = window.grab()
+        versions = window.versions.text()
+        ok = window.isVisible() and not snapshot.isNull() and "ffmpeg version" in versions
+        report = Path(sys.argv[2])
+        report.write_text(
+            json.dumps(
+                {
+                    "visible": window.isVisible(),
+                    "versions": versions,
+                    "size": [snapshot.width(), snapshot.height()],
+                }
+            ),
+            "utf-8",
+        )
+        window.close()
+        return 0 if ok else 1
+    return app.exec()
 
 
 if __name__ == "__main__":

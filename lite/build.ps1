@@ -3,7 +3,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 python -m venv build/lite-env
 $p = 'build/lite-env/Scripts/python.exe'
 & $p -m pip install PySide6-Essentials==6.12.0 pyinstaller==6.22.3 pytest==9.1.1
-& $p -m PyInstaller --paths src --clean --noconfirm --windowed --onefile --name Ytdlp-G-Lite --icon assets/icons/app.ico lite/app.py
+& $p -m PyInstaller --paths src --paths lite --workpath build/pyinstaller --clean --noconfirm --windowed --onefile --name Ytdlp-G-Lite --icon assets/icons/app.ico lite/entry.py
 $pkg = 'build/Ytdlp-G-Lite'
 New-Item -ItemType Directory "$pkg/tools","$pkg/licenses",artifacts -Force | Out-Null
 Copy-Item dist/Ytdlp-G-Lite.exe $pkg
@@ -43,16 +43,19 @@ if ($setup.ExitCode) { throw 'Install failed' }
 $savedPath = $env:PATH
 $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
 $env:PYTHONHOME = Join-Path $env:RUNNER_TEMP 'absent-python'
-$smoke = Start-Process "$install/Ytdlp-G-Lite.exe" -PassThru
-try {
-    $ready = $false
-    foreach ($i in 1..90) {
-        Start-Sleep 1
-        if ((Get-Process -Name Ytdlp-G-Lite -ErrorAction SilentlyContinue | Where-Object MainWindowTitle -eq 'Ytdlp-G Lite')) { $ready = $true; break }
-        if ($smoke.HasExited) { break }
+$portable = Join-Path $env:RUNNER_TEMP 'Portable Lite'
+Expand-Archive artifacts/Ytdlp-G-Lite-portable.zip $portable
+foreach ($case in @(@("installed", "$install/Ytdlp-G-Lite.exe"), @("portable", "$portable/Ytdlp-G-Lite/Ytdlp-G-Lite.exe"))) {
+    $report = Join-Path (Resolve-Path artifacts) ($case[0] + "-smoke.json")
+    $smoke = Start-Process $case[1] -ArgumentList "--smoke-test `"$report`"" -PassThru
+    if (-not $smoke.WaitForExit(60000)) {
+        Get-Process -Name Ytdlp-G-Lite | Select-Object Id,MainWindowTitle | Out-Host
+        taskkill /F /T /PID $smoke.Id
+        throw "Timeout opening $($case[0]) UI"
     }
-    if (-not $ready) { throw 'Installed UI did not open' }
-} finally { if (-not $smoke.HasExited) { taskkill /F /T /PID $smoke.Id } }
+    if (Test-Path $report) { Get-Content $report }
+    if ($smoke.ExitCode -ne 0 -or -not (Test-Path $report)) { throw "UI smoke failed ($($smoke.ExitCode))" }
+}
 Remove-Item Env:PYTHONHOME
 $env:PATH = $savedPath
 @"
