@@ -712,17 +712,31 @@ def ensure_mp4(
                         **hidden_process(),
                     ) as proc,
                 ):
+                    elapsed_media = 0.0
                     for line in proc.stdout:
-                        if line.startswith("out_time_us=") and duration:
+                        key, _, value = line.strip().partition("=")
+                        if key == "out_time_us" and value.lstrip("-").isdigit():
+                            elapsed_media = max(0, int(value) / 1e6)
+                        if key == "speed" and duration:
                             try:
-                                fraction = float(line.split("=", 1)[1]) / 1e6 / duration
+                                speed = float(value.rstrip("x"))
                             except ValueError:
-                                continue
+                                speed = 0
                             progress(
                                 {
                                     "status": "processing",
                                     "encoder": encoder,
-                                    "progress": max(0, min(99, 100 * fraction)),
+                                    "height": video.get("height"),
+                                    "fps": video.get("avg_frame_rate"),
+                                    "codec": video.get("codec_name"),
+                                    "target_codec": video.get("codec_name")
+                                    if copy_video
+                                    else "h264",
+                                    "encoding_speed": value,
+                                    "eta": round(max(0, duration - elapsed_media) / speed)
+                                    if speed > 0
+                                    else None,
+                                    "progress": min(99, elapsed_media / duration * 100),
                                 }
                             )
                     if proc.wait():
