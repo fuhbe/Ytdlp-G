@@ -474,7 +474,7 @@ def main():
     )
     lockdir.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(lockdir / "active.lock"))
-    if not lock.tryLock():
+    if not lock.tryLock(0):
         return 2
     window = Window()
     window.show()
