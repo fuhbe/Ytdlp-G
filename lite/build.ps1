@@ -7,8 +7,10 @@ $p = 'build/lite-env/Scripts/python.exe'
 $pkg = 'build/Ytdlp-G-Lite'
 New-Item -ItemType Directory "$pkg/tools","$pkg/licenses",artifacts -Force | Out-Null
 Copy-Item dist/Ytdlp-G-Lite.exe $pkg
-Copy-Item lite/README.txt,LICENSE,THIRD_PARTY_NOTICES.md $pkg
-Copy-Item assets/licenses/* "$pkg/licenses"
+Copy-Item lite/README.txt,LICENSE $pkg
+Copy-Item assets/licenses/Qt*.txt "$pkg/licenses"
+curl.exe -fsSL https://raw.githubusercontent.com/denoland/deno/v2.9.8/LICENSE.md -o "$pkg/licenses/Deno.txt"
+curl.exe -fsSL https://raw.githubusercontent.com/pyinstaller/pyinstaller/v6.22.3/COPYING.txt -o "$pkg/licenses/PyInstaller.txt"
 & $p scripts/collect_licenses.py "$pkg/licenses"
 function Fetch($url,$hash,$out) {
     curl.exe -fLsS --retry 2 $url -o $out
@@ -28,6 +30,8 @@ foreach ($name in 'LICENSE','THIRD_PARTY_LICENSES.txt') {
 }
 $env:PYTHONPATH = "src;lite"
 $env:LITE_TEST_TOOLS = (Resolve-Path "$pkg/tools").Path
+Fetch https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.26/yt-dlp.exe f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d build/old.exe
+$env:LITE_OLD_ENGINE = (Resolve-Path build/old.exe).Path
 & $p -m pytest lite/test_edition.py -q --junitxml=artifacts/tests.xml
 & $p lite/capture.py artifacts
 Copy-Item "$pkg/Ytdlp-G-Lite.exe" artifacts
@@ -51,5 +55,30 @@ try {
 } finally { if (-not $smoke.HasExited) { taskkill /F /T /PID $smoke.Id } }
 Remove-Item Env:PYTHONHOME
 $env:PATH = $savedPath
+@"
+Ytdlp-G Lite 0.1.0 Beta 1 — validação
+Sistema: $([System.Environment]::OSVersion.VersionString), Windows x64, GitHub Actions.
+Build: https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID
+Código: $env:GITHUB_SHA
+
+Suíte automatizada aprovada. Casos individuais e tempos em tests.xml.
+Downloads individuais, múltiplos links e playlists foram testados com mídia HTTP local.
+A suíte verifica MP4 H.264/AAC, MP3, AV1, VP9, HEVC, HDR, 1080p60, Fast Start,
+cópia de streams, conversão só do áudio, perfil antigo, falha de playlist e cancelamento.
+O atualizador foi exercitado com executável antigo e release oficial, e com falha
+simulada depois da troca para verificar a restauração. Capturas: light.png e dark.png.
+Instalação por usuário e abertura da janela do EXE instalado: aprovadas com
+Python fora do PATH e PYTHONHOME apontando para um diretório inexistente.
+O runner possui Python instalado. Windows 10 e 11 de consumidor limpos não foram testados.
+YouTube: o proxy do ambiente de desenvolvimento retornou HTTP 403. Sem validação online.
+Projetor HY300: sem teste físico. Retomada depende da fonte e da disponibilidade dos fragmentos.
+
+Python $(& $p -c "import platform;print(platform.python_version())")
+PySide6 / Shiboken 6.12.0
+yt-dlp $(& "$pkg/tools/yt-dlp.exe" --version)
+$((& "$pkg/tools/ffmpeg.exe" -version)[0])
+$((& "$pkg/tools/ffprobe.exe" -version)[0])
+$((& "$pkg/tools/deno.exe" --version)[0])
+"@ | Set-Content artifacts/RELATORIO.txt -Encoding utf8
 git archive --format=zip --output=artifacts/Ytdlp-G-Lite-source.zip HEAD
 Get-ChildItem artifacts -File | ForEach-Object { "$((Get-FileHash $_).Hash.ToLower())  $($_.Name)" } | Set-Content artifacts/SHA256SUMS.txt

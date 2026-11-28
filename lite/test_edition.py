@@ -8,8 +8,8 @@ import threading
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 import engine
+import pytest
 
 if os.getenv("LITE_TEST_TOOLS"):
     engine.TOOLS = Path(os.environ["LITE_TEST_TOOLS"])
@@ -22,101 +22,198 @@ def runner():
 
 def source(root, codec, audio="aac", rate=48000, size="128x72"):
     file = root / "source.mp4"
-    subprocess.run([engine.tool("ffmpeg"), "-loglevel","error","-y","-f","lavfi","-i",
-        f"color=s={size}:r=60:d=0.2","-f","lavfi","-i","sine=d=0.2","-c:v",codec,
-        "-c:a",audio,"-ar",str(rate),"-ac","2","-strict","experimental",str(file)],check=True)
+    subprocess.run(
+        [
+            engine.tool("ffmpeg"),
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=s={size}:r=60:d=0.2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=d=0.2",
+            "-c:v",
+            codec,
+            "-c:a",
+            audio,
+            "-ar",
+            str(rate),
+            "-ac",
+            "2",
+            "-strict",
+            "experimental",
+            str(file),
+        ],
+        check=True,
+    )
     return file
 
 
-@pytest.mark.parametrize("codec",["libaom-av1","libvpx-vp9","libx265","libx264"])
-def test_video(tmp_path,runner,codec):
-    src = source(tmp_path,codec,size="1920x1080" if codec=="libx264" else "128x72")
-    output = tmp_path/"música com espaço.mp4"
-    with patch.object(runner,"run",wraps=runner.run) as calls:
-        runner.convert(src,output,"mp4")
+@pytest.mark.parametrize("codec", ["libaom-av1", "libvpx-vp9", "libx265", "libx264"])
+def test_video(tmp_path, runner, codec):
+    src = source(tmp_path, codec, size="1920x1080" if codec == "libx264" else "128x72")
+    output = tmp_path / "música com espaço.mp4"
+    with patch.object(runner, "run", wraps=runner.run) as calls:
+        runner.convert(src, output, "mp4")
     ff = next(args.args[0] for args in calls.call_args_list if "-movflags" in args.args[0])
-    assert ff[ff.index("-c:v")+1] == ("copy" if codec=="libx264" else "libx264")
-    assert ff[ff.index("-c:a")+1]=="copy"
-    _,v = engine.streams(runner.probe(output))
-    assert v["r_frame_rate"]=="60/1"
+    assert ff[ff.index("-c:v") + 1] == ("copy" if codec == "libx264" else "libx264")
+    assert ff[ff.index("-c:a") + 1] == "copy"
+    _, v = engine.streams(runner.probe(output))
+    assert v["r_frame_rate"] == "60/1"
     assert output.read_bytes().index(b"moov") < output.read_bytes().index(b"mdat")
 
 
-def test_audio_only(tmp_path,runner):
-    src = source(tmp_path,"libx264",rate=44100)
-    with patch.object(runner,"run",wraps=runner.run) as calls:
-        runner.convert(src,tmp_path/"ready.mp4","mp4")
+def test_audio_only(tmp_path, runner):
+    src = source(tmp_path, "libx264", rate=44100)
+    with patch.object(runner, "run", wraps=runner.run) as calls:
+        runner.convert(src, tmp_path / "ready.mp4", "mp4")
     ff = next(args.args[0] for args in calls.call_args_list if "-movflags" in args.args[0])
-    assert ff[ff.index("-c:v")+1]=="copy" and ff[ff.index("-c:a")+1]=="aac"
+    assert ff[ff.index("-c:v") + 1] == "copy" and ff[ff.index("-c:a") + 1] == "aac"
 
 
-@pytest.mark.parametrize("ext",["mp4","mp3"])
-def test_http_download(tmp_path,runner,ext):
-    source(tmp_path,"libx264")
-    server = http.server.ThreadingHTTPServer(("127.0.0.1",0),
-               functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(tmp_path)))
-    threading.Thread(target=server.serve_forever,daemon=True).start()
+@pytest.mark.parametrize("ext", ["mp4", "mp3"])
+def test_http_download(tmp_path, runner, ext):
+    source(tmp_path, "libx264")
+    server = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path)),
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         url = f"http://127.0.0.1:{server.server_port}/source.mp4"
-        items = runner.inspect(url,False)
-        assert runner.process(items[0],tmp_path/"á b",ext,0).is_file()
+        items = runner.inspect(url, False)
+        assert runner.process(items[0], tmp_path / "á b", ext, 0).is_file()
     finally:
         server.shutdown()
         server.server_close()
 
 
-@pytest.mark.parametrize("fail",[True,False])
-def test_update(tmp_path,runner,fail,monkeypatch):
-    exe = tmp_path/"yt-dlp.exe"
+@pytest.mark.parametrize("fail", [True, False])
+def test_update(tmp_path, runner, fail, monkeypatch):
+    exe = tmp_path / "yt-dlp.exe"
     exe.write_bytes(b"old")
-    monkeypatch.setattr(engine,"tool",lambda _:str(exe))
-    release = {"tag_name":"2","assets":[{"name":"yt-dlp.exe","browser_download_url":"asset",
-               "digest":"sha256:"+engine.hashlib.sha256(b"new").hexdigest()}]}
-    responses = iter(["1","2","broken" if fail else "2"])
-    runner.run = lambda _:next(responses)
-    request = lambda url,timeout:io.BytesIO(b"new" if url=="asset" else json.dumps(release).encode())
+    monkeypatch.setattr(engine, "tool", lambda _: str(exe))
+    release = {
+        "tag_name": "2",
+        "assets": [
+            {
+                "name": "yt-dlp.exe",
+                "browser_download_url": "asset",
+                "digest": "sha256:" + engine.hashlib.sha256(b"new").hexdigest(),
+            }
+        ],
+    }
+    responses = iter(["1", "2", "broken" if fail else "2"])
+    runner.run = lambda _: next(responses)
+
+    def request(url, timeout):
+        return io.BytesIO(b"new" if url == "asset" else json.dumps(release).encode())
+
     if fail:
         with pytest.raises(ValueError):
-            engine.update(runner,request)
-        assert exe.read_bytes()==b"old"
+            engine.update(runner, request)
+        assert exe.read_bytes() == b"old"
     else:
-        assert engine.update(runner,request)=="2" and exe.read_bytes()==b"new"
+        assert engine.update(runner, request) == "2" and exe.read_bytes() == b"new"
 
 
 def test_cancel(runner):
     import sys
-    timer = threading.Timer(.25,runner.cancel.set)
+
+    timer = threading.Timer(0.25, runner.cancel.set)
     timer.start()
     with pytest.raises(engine.Cancelled):
-        runner.run([sys.executable,"-c","import time; time.sleep(60)"])
+        runner.run([sys.executable, "-c", "import time; time.sleep(60)"])
 
 
-@pytest.mark.parametrize("ext",["mp3","mp4"])
-def test_playlist_and_multiple_links(tmp_path,ext):
+@pytest.mark.parametrize("ext", ["mp3", "mp4"])
+def test_playlist_and_multiple_links(tmp_path, ext):
     from app import Job
-    source(tmp_path,"libx264")
-    (tmp_path/"list.html").write_text('<html><title>Media</title><video src="source.mp4"></video><video src="absent.mp4"></video><video src="source.mp4?third"></video></html>')
-    server = http.server.ThreadingHTTPServer(("127.0.0.1",0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(tmp_path)))
-    threading.Thread(target=server.serve_forever,daemon=True).start()
+
+    source(tmp_path, "libx264")
+    (tmp_path / "list.html").write_text(
+        '<html><title>Media</title><video src="source.mp4"></video><video src="absent.mp4"></video><video src="source.mp4?third"></video></html>'
+    )
+    server = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path)),
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         base = f"http://127.0.0.1:{server.server_port}"
-        dest = tmp_path/"Música e vídeo"
-        job = Job("download",[base+"/list.html",base+"/source.mp4"],True,str(dest),ext,720,[])
+        dest = tmp_path / "Música e vídeo"
+        job = Job(
+            "download", [base + "/list.html", base + "/source.mp4"], True, str(dest), ext, 720, []
+        )
         events = []
-        job.event.connect(lambda k,v:events.append((k,v)))
+        job.event.connect(lambda k, v: events.append((k, v)))
         job.run()
-        paths = sorted(p.name[:3] for p in dest.glob("*/*."+ext))
-        assert paths == ["001","003"], events
-        assert len(list(dest.glob("*."+ext))) == 1
+        paths = sorted(p.name[:3] for p in dest.glob("*/*." + ext))
+        assert paths == ["001", "003"], events
+        assert len(list(dest.glob("*." + ext))) == 1
         assert len(dict(events)["failures"]) == 1
     finally:
         server.shutdown()
         server.server_close()
 
 
-def test_legacy(tmp_path,runner):
-    src = source(tmp_path,"libx264")
-    dst = tmp_path/"legacy.mp4"
-    runner.convert(src,dst,"mp4",-1)
-    _,v = engine.streams(runner.probe(dst))
+def test_legacy(tmp_path, runner):
+    src = source(tmp_path, "libx264")
+    dst = tmp_path / "legacy.mp4"
+    runner.convert(src, dst, "mp4", -1)
+    _, v = engine.streams(runner.probe(dst))
     assert engine.fps(v) == 30 and "Baseline" in v["profile"]
+
+
+def test_hdr_to_sdr(tmp_path, runner):
+    src = tmp_path / "hdr.mp4"
+    subprocess.run(
+        [
+            engine.tool("ffmpeg"),
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=s=128x72:r=24:d=0.3",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=d=0.3",
+            "-c:a",
+            "aac",
+            "-c:v",
+            "libx265",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-x265-params",
+            "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+            "-color_trc",
+            "smpte2084",
+            "-color_primaries",
+            "bt2020",
+            "-colorspace",
+            "bt2020nc",
+            str(src),
+        ],
+        check=True,
+    )
+    runner.convert(src, tmp_path / "sdr.mp4", "mp4")
+    _, v = engine.streams(runner.probe(tmp_path / "sdr.mp4"))
+    assert v["color_transfer"] == "bt709" and v["pix_fmt"] == "yuv420p"
+
+
+@pytest.mark.skipif(not os.getenv("LITE_OLD_ENGINE"), reason="Requires official Windows executable")
+def test_live_official_update(tmp_path, runner, monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(engine, "TOOLS", tmp_path)
+    exe = tmp_path / "yt-dlp.exe"
+    shutil.copy2(os.environ["LITE_OLD_ENGINE"], exe)
+    before = runner.run([str(exe), "--version"])
+    version = engine.update(runner)
+    assert version != before and runner.run([str(exe), "--version"]) == version
